@@ -859,7 +859,6 @@ final class Tab: ObservableObject, Identifiable {
             cover = nil
             failure = nil
             loading = false
-            progress = 0
             reader = false
             behind = nil
             trail = []
