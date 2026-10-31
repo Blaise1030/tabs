@@ -30,9 +30,16 @@ git merge upstream/main
 ## Building
 
 Search needs the full Xcode 16 / Swift 6 toolchain (the Command Line Tools alone cannot build
-it: `swift build` fails on the `SwiftUIMacros` plugin). This machine currently has only the
-Command Line Tools, so the first step is installing Xcode and running
-`sudo xcode-select -s /Applications/Xcode.app`.
+it: `swift build` fails on the `SwiftUIMacros` plugin). Xcode 27.2 is installed and selected
+on this machine (`xcode-select -p` → `/Applications/Xcode.app/Contents/Developer`).
+
+Xcode's license has to be agreed once before its tools will build anything:
+
+```sh
+sudo xcodebuild -license accept
+```
+
+Then:
 
 ```sh
 swift build                 # run from the SwiftPM binary
@@ -75,7 +82,7 @@ architecture):
 
 A Rust daemon on the machine plus an Astro/Solid web app. The daemon serves the app and the
 API on `http://127.0.0.1:7681`, authenticated with a bearer token kept at
-`~/.local/share/tabsh/token`. Its data lives beside the token
+`~/.tabsh/token`. Its data lives beside the token
 (`state.db`, `chats/`, `uploads/`).
 
 Relevant API (all under the bearer token, see `~/Developer/tabsh/src/state.rs` for the full
@@ -134,7 +141,7 @@ Seams found in the fork, to keep the change small:
   restart with no new persistence.
 - **One tab per session.** Dedupe by scanning `tabs + parkedTabs` for a tab whose URL matches
   `solo=1` and the same `tab=<id>`; activate it instead of opening a second one.
-- **Pairing once.** The token lives at `~/.local/share/tabsh/token` (mode 0600). The browser
+- **Pairing once.** The token lives at `~/.tabsh/token` (mode 0600). The browser
   reads it and opens `http://127.0.0.1:7681/open?token=…` once per install; the daemon stores
   it in that origin's `localStorage`, which the session tabs share. Swift calls to
   `/api/…` use the same token as `Authorization: Bearer …`.
@@ -147,6 +154,38 @@ Seams found in the fork, to keep the change small:
   solo URL building/parsing, and the switcher rows. One registration line in the app, no
   edits to `Browser.swift` beyond what the switcher needs.
 
+### Split screen
+
+Search already has the split: any two tabs side by side (or stacked), one draggable divider,
+the focused pane outlined, with pairs and widths restored (`TabSplit`/`SplitView`). Session
+tabs inherit it for free, which gives the package the pairing that matters without a second
+layout system:
+
+- a session terminal beside the page it is building, or beside the docs;
+- two sessions, e.g. an agent working while you watch another;
+- a session beside the board tab.
+
+No tabsh-side split is needed in solo mode: the browser's split is the only one. Later, add
+"Open Session Beside This Page" (split the current page with a session).
+
+### One package
+
+The goal is one `.app` the user installs and opens: browser, split, session tabs, terminal and
+agent chat. The tabsh **daemon** is the one external piece; there are two options:
+
+1. **Reuse a running daemon** (the default assumption): talk to `127.0.0.1:7681` if
+   `/api/about` answers; otherwise offer to start one.
+2. **Ship the daemon inside the bundle** (the "all in one package" version): put a signed
+   `tabsh` binary in `Contents/Resources/`, start it at launch if no daemon answers, stop it
+   at quit, and pass `TABSH_DB`/`PORT` only when a private instance is needed. Never fight a
+   daemon that is already installed and running, and never share its `~/.tabsh` if a private
+   one is started.
+
+Packaging concerns to settle when we get there: signing/notarizing the embedded daemon as a
+helper, updating it with the app through the same signed feed, the extra binary size, and
+offering "Open tabsh in another browser" as a fallback. The daemon embeds the web app, so no
+separate web assets are needed beyond the binary.
+
 ### Working on the tabsh side
 
 The solo view is a change to the tabsh repo (`~/Developer/tabsh`), which has its own rules:
@@ -156,17 +195,20 @@ both repositories in one diff.
 
 ### Milestones
 
-- **M0 — runnable fork.** Xcode installed, `SEARCH_DEV=1 ./build.sh` builds and launches,
-  bundle id and data folder separate from Search. (blocked on Xcode)
+- **M0 — runnable fork.** `./build.sh` builds and launches, bundle id and data folder separate
+  from Search. (needs the Xcode license agreed; see below)
 - **M1 — solo session view (tabsh repo).** `?solo=1&tab=<id>` renders one terminal or agent
   chat with no tabsh chrome, with tests for the place parsing and the shell rendering.
 - **M2 — session tabs.** Browser opens a solo URL as a normal tab, one per session, restores
-  them on launch, titles from the daemon, close just closes the tab.
+  them on launch, titles from the daemon, close just closes the tab. Split works between a
+  session tab and any other tab.
 - **M3 — switcher.** `⌘K` lists tabsh cards across projects with status; Enter opens/focuses
   the tab; "New session" creates a card and opens its tab.
 - **M4 — live status.** Needs-input/completed badges and Dock/tab attention from
   `/api/board/events`; status changes from the tab's context menu.
 - **M5 — capture.** "Send this page to tabsh": current URL + selection/title into a new card.
+- **M6 — one package.** Embed the daemon in the app bundle (or reuse an installed one),
+  signed and updated with the app.
 
 Each milestone should be additive files where possible. Avoid editing `Browser.swift` and
 `TabBar.swift` unless a seam is missing; those two files are where upstream moves fastest.
