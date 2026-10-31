@@ -5,8 +5,9 @@ A macOS WebKit browser with [tabsh](https://tabsh.cc) built in.
 This repository is a fork of [driceroland/Search](https://github.com/driceroland/Search) (MIT,
 see `LICENSE`). Search is the base: a small, quiet, native WebKit browser with sidebar tabs,
 pins, groups, split view, find, downloads, passwords/passkeys, Reader and a signed updater.
-The product goal here is different — the browser is the client for tabsh: cards, sessions and
-agents live in the browser chrome, next to the pages they are working on.
+The product goal here is different: **a tabsh session is a browser tab.** The terminal and
+the agent chat are what a tabsh tab shows, in the browser's own tab strip — no second tab
+strip, no board required to work.
 
 Upstream is kept as a remote so fixes and features can be merged rather than rewritten:
 
@@ -93,32 +94,49 @@ list):
 
 ### How the browser should use it
 
-Two layers, in this order:
+**One tabsh session = one browser tab.** The browser's tab strip is the only tab strip; the
+terminal or the agent chat fills the tab's content. Closing the tab does not kill the shell
+(tabsh's whole point is that sessions outlive tabs); reopening it reattaches.
 
-1. **Native chrome (the point of the fork).** A Swift client for the daemon in a new
-   `Sources/Search/Tabsh/` folder: token discovery, a small HTTP/SSE client, and a sidebar
-   section showing cards grouped by status across projects, with unread/bell state from
-   `/api/board/events`. Cards open as tabs; their terminal is tabsh's web UI (`/app/`) or a
-   future native terminal view, not a second PTY.
-2. **Session tabs.** A tabsh session becomes a tab whose URL is the tabsh app for that session
-   (`http://127.0.0.1:7681/app/?...`) so the terminal/chat is the web app's, with native tab
-   status in the browser's own tab strip (badge, ring on Needs input).
+Two pieces make that work:
 
-Keep the daemon the source of truth. The browser is a client: no local card state that can
-drift, no second SQLite, no polling when an SSE stream will do.
+1. **A solo session view in the tabsh web app** (separate, small change in
+   `~/Developer/tabsh`). A URL such as `http://127.0.0.1:7681/app/?solo=1&tab=<id>` that:
+   - forces the place to that session,
+   - hides the board, the tab strip, the session bar and the explorer,
+   - keeps the terminal/chat attach, reconnect and title behaviour as they are today.
+
+   Without this, every tab would show a second tab strip and the board inside it. Do that
+   work in the tabsh repo under its own rules (`docs/architecture.md`, pure logic tested with
+   `node --test`, one feature per folder).
+
+2. **Native session tabs in the browser.**
+   - A tab whose URL is the solo session URL above; the session id is part of the tab so a
+     restart restores it.
+   - Opening a session: a switcher (`⌘K`-style) listing cards across projects from
+     `GET /api/sessions`, Enter opens or focuses the one tab per session (no duplicates).
+   - Tab title from the card's name/agent title; live status (Needs input, Completed) from
+     `GET /api/board/events`, shown as a badge/ring on the tab.
+   - Close = close the tab, not the shell. A closed tab can be reopened from the switcher.
+   - Later: status actions in the tab's context menu, "new session", and "send this page to
+     tabsh" (URL/selection into a card, attachments through `/api/uploads`).
+
+The daemon stays the source of truth. The browser keeps tab identity and presentation only;
+no local card database, no polling when SSE will do.
 
 ### Milestones
 
 - **M0 — runnable fork.** Xcode installed, `SEARCH_DEV=1 ./build.sh` builds and launches,
   bundle id and data folder separate from Search. (blocked on Xcode)
-- **M1 — tabsh sidebar.** Daemon discovery + token, card list grouped by status, live updates
-  from `/api/board/events`, click opens the session, refresh/offline states.
-- **M2 — sessions as tabs.** Opening a card makes/reuses a tab; tab title/status follow the
-  card; Needs input rings/badges the browser tab and Dock.
-- **M3 — capture.** "Send this page to tabsh": current URL + selection/title into a new card
-  (folder picker, provider), images/attachments through `/api/uploads`.
-- **M4 — board actions in the browser.** Move a card between statuses, new card, prompt edit,
-  quick switcher (`⌘K`-style) over cards, all from native chrome.
+- **M1 — solo session view (tabsh repo).** `?solo=1&tab=<id>` renders one terminal or agent
+  chat with no tabsh chrome, with tests for the place parsing and the shell rendering.
+- **M2 — session tabs.** Browser opens a solo URL as a normal tab, one per session, restores
+  them on launch, titles from the daemon, close just closes the tab.
+- **M3 — switcher.** `⌘K` lists tabsh cards across projects with status; Enter opens/focuses
+  the tab; "New session" creates a card and opens its tab.
+- **M4 — live status.** Needs-input/completed badges and Dock/tab attention from
+  `/api/board/events`; status changes from the tab's context menu.
+- **M5 — capture.** "Send this page to tabsh": current URL + selection/title into a new card.
 
 Each milestone should be additive files where possible. Avoid editing `Browser.swift` and
 `TabBar.swift` unless a seam is missing; those two files are where upstream moves fastest.
@@ -135,6 +153,9 @@ Each milestone should be additive files where possible. Avoid editing `Browser.s
 ## Open decisions
 
 1. Product name, display name and icon (the bundle id is a placeholder but a safe one).
-2. M1 scope: full board in the sidebar, or sessions-only first.
-3. Whether the terminal stays the tabsh web app or gets a native view later.
-4. Public or private distribution, and the Apple Developer team for passkeys/signing.
+2. Does the board exist anywhere in the browser, or is the switcher enough? Recommended: one
+   optional "tabsh" tab for the full board, everything else session tabs.
+3. Are session tabs pinned by default, or grouped under a "tabsh" group?
+4. Whether the terminal stays the tabsh web app in a tab or gets a native view later (start
+   with the web app; it is the same xterm and chat the daemon already serves).
+5. Public or private distribution, and the Apple Developer team for passkeys/signing.
