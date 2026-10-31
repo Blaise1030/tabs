@@ -29,6 +29,11 @@ import Security
 final class Updater: ObservableObject {
     static let shared = Updater()
 
+    /// tabsh-browser is a fork of Search: upstream's feed names builds signed
+    /// by Office Commun, and installing one would replace this app with
+    /// theirs. Off until this app has a feed and an identity of its own.
+    nonisolated static let enabled = false
+
     /// Where the file lives. SEARCH_FEED, for a test run, points somewhere
     /// else — and is the only way plain http is accepted, so a build that
     /// was not handed the variable only ever listens to the real site.
@@ -157,6 +162,10 @@ final class Updater: ObservableObject {
     /// Search › Check for Updates…: the result is said in the line at the
     /// foot of the window, and an available update is offered in the menu.
     func checkByHand() {
+        guard Updater.enabled else {
+            say?("Updates are off in this build")
+            return
+        }
         switch stage {
         case .ready(let next):
             say?("Search \(next.version) is ready — relaunch to use it")
@@ -179,6 +188,10 @@ final class Updater: ObservableObject {
     /// names, or nil when this is the latest; what becomes of it after that
     /// is said through the line handed to `checkIfDue`.
     func check(then done: @escaping (Release?) -> Void) {
+        guard Updater.enabled else {
+            done(nil)
+            return
+        }
         guard !checking else { return }
         checking = true
         Task { [weak self] in

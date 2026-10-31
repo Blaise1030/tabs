@@ -1,5 +1,8 @@
 # Search
 
+> **This repository is the tabsh-browser fork.** See [FORK.md](FORK.md) for what differs and
+> how tabsh is being integrated. The README below describes the upstream Search app.
+
 A small, fast, quiet web browser for the Mac, by [Office Commun](https://officecommun.com).
 
 ![Search, with its tabs down the left and a page taking the rest of the window](.github/screenshot.png)
