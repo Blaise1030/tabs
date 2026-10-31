@@ -124,6 +124,36 @@ Two pieces make that work:
 The daemon stays the source of truth. The browser keeps tab identity and presentation only;
 no local card database, no polling when SSE will do.
 
+### Implementation notes (browser side)
+
+Seams found in the fork, to keep the change small:
+
+- **Tabs are URLs already.** `Browser.open(_:foreground:atEnd:from:mayWait:)`
+  (`Sources/Search/Browser.swift:4709`) creates a tab from a URL, and the session restores
+  tabs by URL (`Sources/Search/Session.swift`). A solo session URL therefore survives a
+  restart with no new persistence.
+- **One tab per session.** Dedupe by scanning `tabs + parkedTabs` for a tab whose URL matches
+  `solo=1` and the same `tab=<id>`; activate it instead of opening a second one.
+- **Pairing once.** The token lives at `~/.local/share/tabsh/token` (mode 0600). The browser
+  reads it and opens `http://127.0.0.1:7681/open?token=…` once per install; the daemon stores
+  it in that origin's `localStorage`, which the session tabs share. Swift calls to
+  `/api/…` use the same token as `Authorization: Bearer …`.
+- **Loading from the daemon, not tabsh.cc.** `http://127.0.0.1:7681/app/…` avoids WebKit's
+  https→http loopback restriction and gives the tabs a single, stable origin.
+- **Status later.** Keep a `[sessionID: Tab]` index built from the tab URLs; `/api/board/events`
+  then updates a badge/title without touching the tab model. `Tab` is
+  `Sources/Search/Tab.swift:270`; the switcher is `TabSwitcher.swift` (⌘K).
+- **New code goes in `Sources/Search/Tabsh/`**: token discovery, the tiny HTTP/SSE client,
+  solo URL building/parsing, and the switcher rows. One registration line in the app, no
+  edits to `Browser.swift` beyond what the switcher needs.
+
+### Working on the tabsh side
+
+The solo view is a change to the tabsh repo (`~/Developer/tabsh`), which has its own rules:
+`docs/architecture.md`, one feature per folder, pure logic tested with `node --test`, and
+`pnpm -C web test` / `pnpm -C web check`. Do it in a session rooted there rather than mixing
+both repositories in one diff.
+
 ### Milestones
 
 - **M0 — runnable fork.** Xcode installed, `SEARCH_DEV=1 ./build.sh` builds and launches,
