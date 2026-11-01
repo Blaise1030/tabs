@@ -4,7 +4,7 @@
 #   push a v* tag        build both architectures, then attach the four files
 #                        to a GitHub Release
 #   Run workflow         the same build, left as artifacts on the run (tick
-#                        "Create a release" to publish it too)
+#                        "Create a release" to draft one you can look over)
 #
 # Why not build.sh alone: build.sh expects a tabsh binary beside it
 # (TABSH_BINARY), normally from ../tabsh's target/release. There is no such
@@ -31,9 +31,11 @@ on:
       tabsh-ref:
         description: tabsh branch, tag or commit to embed
         required: false
-        default: main
+        # The daemon this browser was built and tested against. Move it when
+        # tabsh's API or embedded app changes, or type "main" for the newest.
+        default: v1.8.1
       release:
-        description: Create a GitHub Release from this run
+        description: Create a draft GitHub Release from this run
         type: boolean
         default: false
 
@@ -61,12 +63,12 @@ jobs:
           - arch: x86_64
             rust_target: x86_64-apple-darwin
     env:
-      TABSH_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.tabsh-ref || 'main' }}
+      TABSH_REF: ${{ inputs.tabsh-ref || 'v1.8.1' }}
       SEARCH_ARCH: ${{ matrix.arch }}
     outputs:
       tabsh-commit: ${{ steps.tabsh.outputs.commit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The image's default Xcode is 26.6 (macOS 26 SDK), which is what the
       # sources are written for. Xcode 27 is a preview there; the local check
@@ -90,7 +92,7 @@ jobs:
           key: ${{ matrix.rust_target }}
 
       - name: Cache SwiftPM
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .build
@@ -142,8 +144,45 @@ jobs:
           test -f "$OUT/Tabs.dmg"
           echo "Tabs $(tr -d '[:space:]' < VERSION), ${{ matrix.arch }}, tabsh ${{ steps.tabsh.outputs.commit }}"
 
+      # What makes the download worth having: the daemon inside the app starts
+      # and answers the endpoints the session tabs use. Its own database and
+      # port, so it cannot touch one already running on the runner. Skipped on
+      # the Intel build: that binary is for another CPU.
+      - name: Smoke-test the embedded daemon
+        if: matrix.arch == 'arm64'
+        run: |
+          set -euo pipefail
+          APP="build/Tabs.app"
+          STATE="$(mktemp -d)"
+          PORT=7799 TABSH_DB="$STATE/state.db" TABSH_NO_BROWSER=1 \
+            "$APP/Contents/Resources/tabsh" > "$STATE/log" 2>&1 &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true; cat "$STATE/log" || true' EXIT
+
+          for _ in $(seq 1 100); do
+            [ -s "$STATE/token" ] && break
+            sleep 0.1
+          done
+          TOKEN="$(cat "$STATE/token")"
+          API="http://127.0.0.1:7799"
+
+          # /api/about is what the browser probes before it trusts a daemon.
+          for _ in $(seq 1 100); do
+            curl -fsS -H "Authorization: Bearer $TOKEN" "$API/api/about" > "$STATE/about.json" && break
+            sleep 0.1
+          done
+          grep -q '"state_path"' "$STATE/about.json"
+
+          # A card, as the browser makes one, then the board's list of them.
+          curl -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+            -d '{"cwd":"/tmp","name":"CI"}' "$API/api/sessions" > "$STATE/created.json"
+          grep -q '"id"' "$STATE/created.json"
+          curl -fsS -H "Authorization: Bearer $TOKEN" "$API/api/sessions" > "$STATE/sessions.json"
+          grep -q '^\[' "$STATE/sessions.json"
+          echo "daemon $(cat "$STATE/about.json")"
+
       - name: Keep the build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Tabs-macos-${{ matrix.arch }}
           if-no-files-found: error
@@ -162,9 +201,9 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.release)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
 
@@ -226,6 +265,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # A tag is a release you meant; a run you started by hand is a draft
+          # you can look over before anyone downloads it.
+          DRAFT=""
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then DRAFT="--draft"; fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" out/* --clobber
             gh release edit "$TAG" --notes-file notes.md
@@ -233,6 +276,6 @@ jobs:
             gh release create "$TAG" out/* \
               --title "Tabs $VERSION" \
               --notes-file notes.md \
-              --target "$GITHUB_SHA"
+              --target "$GITHUB_SHA" $DRAFT
           fi
           echo "https://github.com/${{ github.repository }}/releases/tag/$TAG"
