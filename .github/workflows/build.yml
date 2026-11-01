@@ -183,17 +183,26 @@ jobs:
           grep -q '^\[' "$STATE/sessions.json"
           echo "daemon $(cat "$STATE/about.json")"
 
+      # Both architectures keep their files in the same place in the artifact:
+      # upload-artifact takes the files' shared folder as the artifact's root,
+      # so a staging folder keeps arm64's build/Tabs.zip and Intel's
+      # build/intel/Tabs.zip from arriving at different depths.
       - name: Keep the build
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.arch }}" = "arm64" ]; then OUT=build; else OUT=build/intel; fi
+          mkdir -p dist
+          cp "$OUT/Tabs.zip" "$OUT/Tabs.dmg" dist/
+
+      - name: Upload the build
         uses: actions/upload-artifact@v7
         with:
           name: Tabs-macos-${{ matrix.arch }}
           if-no-files-found: error
           retention-days: 30
           path: |
-            build/Tabs.zip
-            build/Tabs.dmg
-            build/intel/Tabs.zip
-            build/intel/Tabs.dmg
+            dist/Tabs.zip
+            dist/Tabs.dmg
 
   release:
     name: Release
@@ -217,9 +226,12 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" != "tag" ]; then TAG="v$VERSION"; fi
           mkdir -p out
           for dir in dist/Tabs-macos-*; do
-            arch="${dir##*Tabs-macos-}"
-            cp "$dir/Tabs.zip" "out/Tabs-$VERSION-$arch.zip"
-            cp "$dir/Tabs.dmg" "out/Tabs-$VERSION-$arch.dmg"
+            arch="${dir##*/Tabs-macos-}"
+            ZIP="$(find "$dir" -maxdepth 3 -name Tabs.zip | head -1)"
+            DMG="$(find "$dir" -maxdepth 3 -name Tabs.dmg | head -1)"
+            [ -n "$ZIP" ] && [ -n "$DMG" ] || { echo "no ZIP or DMG for $arch in $dir" >&2; exit 1; }
+            cp "$ZIP" "out/Tabs-$VERSION-$arch.zip"
+            cp "$DMG" "out/Tabs-$VERSION-$arch.dmg"
           done
           (cd out && sha256sum ./* > SHA256SUMS.txt && ls -lh)
           echo "TAG=$TAG" >> "$GITHUB_ENV"
