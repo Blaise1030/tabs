@@ -213,6 +213,8 @@ jobs:
   release:
     name: Release
     needs: build
+    permissions:
+      contents: write
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       (github.event_name == 'workflow_dispatch' && inputs.release)
@@ -287,7 +289,12 @@ jobs:
           # A tag is a release you meant; a run you started by hand is a draft
           # you can look over before anyone downloads it.
           DRAFT=""
-          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then DRAFT="--draft"; fi
+          TARGET=()
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            DRAFT="--draft"
+            # The tag doesn't exist yet on a hand-started release; make it here.
+            TARGET=(--target "$GITHUB_SHA")
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" out/* --clobber
             gh release edit "$TAG" --notes-file notes.md
@@ -295,6 +302,6 @@ jobs:
             gh release create "$TAG" out/* \
               --title "Tabs $VERSION" \
               --notes-file notes.md \
-              --target "$GITHUB_SHA" $DRAFT
+              "${TARGET[@]}" $DRAFT
           fi
           echo "https://github.com/${{ github.repository }}/releases/tag/$TAG"
