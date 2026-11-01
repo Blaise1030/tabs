@@ -1,0 +1,238 @@
+# Builds Tabs — the browser and the tabsh daemon it runs its sessions in — into
+# a downloadable .app, .zip and .dmg, on a Mac, for Macs.
+#
+#   push a v* tag        build both architectures, then attach the four files
+#                        to a GitHub Release
+#   Run workflow         the same build, left as artifacts on the run (tick
+#                        "Create a release" to publish it too)
+#
+# Why not build.sh alone: build.sh expects a tabsh binary beside it
+# (TABSH_BINARY), normally from ../tabsh's target/release. There is no such
+# checkout on a runner, so this workflow clones tabsh, builds its daemon for
+# the same architecture, and hands the path to build.sh. The daemon is the
+# part that matters: without it the app opens but has no terminals and no
+# agents.
+#
+# Signing: none, by choice. build.sh ad-hoc signs the app and the daemon, which
+# is enough for any Mac once the download's quarantine flag is off (see the
+# release notes this workflow writes). A Developer ID + notarytool secret
+# would make double-click install work, and is the only change needed if that
+# day comes.
+#
+# Runner cost: macOS minutes bill at 10x on private repositories. Two jobs per
+# run, each a few minutes; tags only, so ordinary pushes cost nothing.
+name: Build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tabsh-ref:
+        description: tabsh branch, tag or commit to embed
+        required: false
+        default: main
+      release:
+        description: Create a GitHub Release from this run
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TABSH_REPOSITORY: https://github.com/Blaise1030/tabsh
+
+jobs:
+  build:
+    name: Tabs (${{ matrix.arch }})
+    runs-on: macos-26
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            rust_target: aarch64-apple-darwin
+          - arch: x86_64
+            rust_target: x86_64-apple-darwin
+    env:
+      TABSH_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.tabsh-ref || 'main' }}
+      SEARCH_ARCH: ${{ matrix.arch }}
+    outputs:
+      tabsh-commit: ${{ steps.tabsh.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image's default Xcode is 26.6 (macOS 26 SDK), which is what the
+      # sources are written for. Xcode 27 is a preview there; the local check
+      # is the version below, printed so a failure names the toolchain.
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          rustc --version
+
+      # Both builds run on Apple Silicon: Swift and Rust both cross-compile to
+      # Intel from it, and one image keeps the two artifacts identical in
+      # everything but their slices.
+      - name: Add the Rust target for ${{ matrix.arch }}
+        run: rustup target add "${{ matrix.rust_target }}"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .tabsh-src -> target
+          key: ${{ matrix.rust_target }}
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-${{ matrix.arch }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: swiftpm-${{ matrix.arch }}-
+
+      # tabsh is public, so no token is needed. A branch, tag or commit all
+      # work; the commit is printed and lands in the release notes.
+      - name: Get tabsh
+        id: tabsh
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none "$TABSH_REPOSITORY" .tabsh-src
+          git -C .tabsh-src checkout "$TABSH_REF"
+          echo "commit=$(git -C .tabsh-src rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          git -C .tabsh-src log -1 --format='tabsh %h %s'
+
+      # The daemon embeds the web app (src/app-assets is committed), so no
+      # pnpm or Node step is needed — just cargo.
+      - name: Build the tabsh daemon
+        run: |
+          set -euo pipefail
+          cargo build --release --locked \
+            --target "${{ matrix.rust_target }}" \
+            --manifest-path .tabsh-src/Cargo.toml
+          DAEMON=".tabsh-src/target/${{ matrix.rust_target }}/release/tabsh"
+          lipo -archs "$DAEMON" | grep -qx "${{ matrix.arch }}"
+
+      # build.sh does the rest: SwiftPM release build, fonts, icon, plist,
+      # ad-hoc signature, DMG and updater ZIP. "dmg" also writes an appcast;
+      # the fork's updater is off, so it is simply ignored.
+      - name: Build Tabs
+        env:
+          TABSH_BINARY: ${{ github.workspace }}/.tabsh-src/target/${{ matrix.rust_target }}/release/tabsh
+        run: ./build.sh release dmg
+
+      - name: Check what was built
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.arch }}" = "arm64" ]; then OUT=build; else OUT=build/intel; fi
+          APP="$OUT/Tabs.app"
+          test -x "$APP/Contents/MacOS/Tabs"
+          test -x "$APP/Contents/Resources/tabsh"
+          lipo -archs "$APP/Contents/MacOS/Tabs" | grep -qx "${{ matrix.arch }}"
+          lipo -archs "$APP/Contents/Resources/tabsh" | grep -qx "${{ matrix.arch }}"
+          codesign --verify --deep --strict "$APP"
+          test -f "$OUT/Tabs.zip"
+          test -f "$OUT/Tabs.dmg"
+          echo "Tabs $(tr -d '[:space:]' < VERSION), ${{ matrix.arch }}, tabsh ${{ steps.tabsh.outputs.commit }}"
+
+      - name: Keep the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tabs-macos-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            build/Tabs.zip
+            build/Tabs.dmg
+            build/intel/Tabs.zip
+            build/intel/Tabs.dmg
+
+  release:
+    name: Release
+    needs: build
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Collect and name the files
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          TAG="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then TAG="v$VERSION"; fi
+          mkdir -p out
+          for dir in dist/Tabs-macos-*; do
+            arch="${dir##*Tabs-macos-}"
+            cp "$dir/Tabs.zip" "out/Tabs-$VERSION-$arch.zip"
+            cp "$dir/Tabs.dmg" "out/Tabs-$VERSION-$arch.dmg"
+          done
+          (cd out && sha256sum ./* > SHA256SUMS.txt && ls -lh)
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Write the notes
+        run: |
+          set -euo pipefail
+          cat > notes.md <<'NOTES'
+          Tabs for macOS, with the tabsh daemon inside it: terminals and agent
+          sessions live in the browser's own tabs. Built by GitHub Actions from
+          the commit below; tabsh is embedded at the commit named here.
+
+          ## Install
+
+          1. Download the file for your Mac and unzip it (`Tabs.zip`) or open it
+             (`Tabs.dmg`).
+          2. Drag **Tabs** to Applications.
+          3. First launch: this build is ad-hoc signed, not notarised, so macOS
+             will refuse it once. Clear the download flag, then open it:
+
+             ```sh
+             xattr -dr com.apple.quarantine /Applications/Tabs.app
+             ```
+
+             Or right-click Tabs → Open, then Open again. Afterwards it starts
+             normally, agents included.
+
+          The app carries tabsh, so there is no second install. Agents are
+          still the CLIs you run: `claude`, `codex`, `opencode` etc. must be on
+          the Mac's `PATH`, as with any terminal.
+
+          Apple Silicon → `arm64`; Intel → `x86_64`.
+          NOTES
+          {
+            echo
+            echo "---"
+            echo
+            echo "Built from \`${GITHUB_SHA::7}\`, tabsh at \`${{ needs.build.outputs.tabsh-commit }}\`."
+            echo "SHA-256 of each file is in \`SHA256SUMS.txt\`."
+          } >> notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" out/* \
+              --title "Tabs $VERSION" \
+              --notes-file notes.md \
+              --target "$GITHUB_SHA"
+          fi
+          echo "https://github.com/${{ github.repository }}/releases/tag/$TAG"
