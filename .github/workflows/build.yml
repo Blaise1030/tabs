@@ -191,13 +191,16 @@ jobs:
       # Both architectures keep their files in the same place in the artifact:
       # upload-artifact takes the files' shared folder as the artifact's root,
       # so a staging folder keeps arm64's build/Tabs.zip and Intel's
-      # build/intel/Tabs.zip from arriving at different depths.
+      # build/intel/Tabs.zip from arriving at different depths. The version and
+      # the chip are in the file's own name, so the release needs no layout.
       - name: Keep the build
         run: |
           set -euo pipefail
           if [ "${{ matrix.arch }}" = "arm64" ]; then OUT=build; else OUT=build/intel; fi
+          VERSION="$(tr -d '[:space:]' < VERSION)"
           mkdir -p dist
-          cp "$OUT/Tabs.zip" "$OUT/Tabs.dmg" dist/
+          cp "$OUT/Tabs.zip" "dist/Tabs-$VERSION-${{ matrix.arch }}.zip"
+          cp "$OUT/Tabs.dmg" "dist/Tabs-$VERSION-${{ matrix.arch }}.dmg"
 
       - name: Upload the build
         uses: actions/upload-artifact@v7
@@ -205,9 +208,7 @@ jobs:
           name: Tabs-macos-${{ matrix.arch }}
           if-no-files-found: error
           retention-days: 30
-          path: |
-            dist/Tabs.zip
-            dist/Tabs.dmg
+          path: dist/*
 
   release:
     name: Release
@@ -230,14 +231,12 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           if [ "${GITHUB_REF_TYPE}" != "tag" ]; then TAG="v$VERSION"; fi
           mkdir -p out
-          for dir in dist/Tabs-macos-*; do
-            arch="${dir##*/Tabs-macos-}"
-            ZIP="$(find "$dir" -maxdepth 3 -name Tabs.zip | head -1)"
-            DMG="$(find "$dir" -maxdepth 3 -name Tabs.dmg | head -1)"
-            [ -n "$ZIP" ] && [ -n "$DMG" ] || { echo "no ZIP or DMG for $arch in $dir" >&2; exit 1; }
-            cp "$ZIP" "out/Tabs-$VERSION-$arch.zip"
-            cp "$DMG" "out/Tabs-$VERSION-$arch.dmg"
-          done
+          # The builds already named each file Tabs-<version>-<chip>.zip/.dmg;
+          # download-artifact's folder layout is its own business.
+          find dist -type f \( -name "Tabs-$VERSION-*.zip" -o -name "Tabs-$VERSION-*.dmg" \) \
+            -exec cp {} out/ \;
+          COUNT="$(find out -type f | wc -l | tr -d ' ')"
+          [ "$COUNT" -ge 2 ] || { echo "only $COUNT files to release" >&2; ls -R dist >&2; exit 1; }
           (cd out && sha256sum ./* > SHA256SUMS.txt && ls -lh)
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
@@ -252,8 +251,9 @@ jobs:
 
           ## Install
 
-          1. Download the file for your Mac and unzip it (`Tabs.zip`) or open it
-             (`Tabs.dmg`).
+          1. Download the file for your Mac: the name ends in `arm64` (Apple
+             Silicon) or `x86_64` (Intel). Unzip it (`Tabs-….zip`) or open it
+             (`Tabs-….dmg`).
           2. Drag **Tabs** to Applications.
           3. First launch: this build is ad-hoc signed, not notarised, so macOS
              will refuse it once. Clear the download flag, then open it:
