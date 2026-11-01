@@ -725,6 +725,7 @@ private struct TabPill: View, Equatable {
     }
 
     var body: some View {
+        let _ = Bench.count("pill")
         Group {
             if pinned {
                 Group {
