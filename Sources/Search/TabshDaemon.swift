@@ -55,6 +55,52 @@ final class TabshDaemon {
         stateFolder.deletingLastPathComponent().appendingPathComponent("bin", isDirectory: true)
     }
 
+    /// The `PATH` the daemon is given, and through it every shell and agent
+    /// it starts.
+    ///
+    /// An app opened from the Dock or the Finder is launched by `launchd`
+    /// with its own `PATH` — `/usr/bin:/bin:/usr/sbin:/sbin` — not the one a
+    /// terminal has. Agents are installed where their instructions put them,
+    /// though: `cursor-agent` and `claude` in `~/.local/bin`, `opencode` and
+    /// the rest of Homebrew in `/opt/homebrew/bin`, npm's global `bin` beside
+    /// nvm or pnpm. With only `launchd`'s three folders, every ACP chat died
+    /// on `failed to spawn ACP agent ...: No such file or directory`, whatever
+    /// the agent, and it kept dying: the daemon outlives the browser, so a
+    /// relaunch from a terminal inherited nothing back into a daemon that was
+    /// already up.
+    ///
+    /// The app's `tabsh` link comes first, so nothing installed elsewhere can
+    /// shadow the copy the hooks are meant to call, then the folders above, in
+    /// the order a login shell usually has them, then whatever this process
+    /// did inherit (a build run from a shell still finds its own `PATH`).
+    nonisolated static var daemonPath: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        var parts = [
+            binFolder.path,
+            "\(home)/.local/bin",
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "\(home)/.cargo/bin",
+            "\(home)/.bun/bin",
+            "\(home)/.deno/bin",
+            "\(home)/Library/pnpm/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+        parts += (ProcessInfo.processInfo.environment["PATH"] ?? "")
+            .split(separator: ":")
+            .map(String.init)
+
+        var seen = Set<String>()
+        return parts
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+            .joined(separator: ":")
+    }
+
     /// What the daemon reads to know what it is talking to.
     nonisolated static func token() -> String? {
         try? String(contentsOf: tokenPath, encoding: .utf8)
@@ -144,11 +190,13 @@ final class TabshDaemon {
         environment["TABSH_DB"] = TabshDaemon.databasePath.path
         environment["PORT"] = String(TabshDaemon.port)
         // The shells and agents the daemon starts inherit its PATH (see
-        // `binFolder`): this app's own `tabsh` comes first, so `tabsh setup`
-        // and the hooks it writes work with no separate install.
+        // `binFolder` and `daemonPath`): this app's own `tabsh` comes first,
+        // so `tabsh setup` and the hooks it writes work with no separate
+        // install, and the folders agents are installed into are there even
+        // when the app was opened from the Dock and `launchd`'s own PATH
+        // holds nothing but `/usr/bin:/bin:/usr/sbin:/sbin`.
         linkBundledCLI(binary)
-        let path = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        environment["PATH"] = TabshDaemon.binFolder.path + ":" + path
+        environment["PATH"] = TabshDaemon.daemonPath
         // It is not a terminal app when the browser starts it, and it must
         // not try to open a browser of its own.
         environment["TABSH_NO_BROWSER"] = "1"
