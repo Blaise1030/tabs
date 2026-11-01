@@ -3,8 +3,9 @@
 #
 #   push a v* tag        build both architectures, then attach the four files
 #                        to a GitHub Release
-#   Run workflow         the same build, left as artifacts on the run (tick
-#                        "Create a release" to draft one you can look over)
+#   Run workflow         the same build, left as artifacts on the run; pick one
+#                        architecture to halve the minutes, or tick "Create a
+#                        release" to draft one you can look over
 #
 # Why not build.sh alone: build.sh expects a tabsh binary beside it
 # (TABSH_BINARY), normally from ../tabsh's target/release. There is no such
@@ -28,6 +29,11 @@ on:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
+      arch:
+        description: Which Mac to build for
+        type: choice
+        options: [both, arm64, x86_64]
+        default: both
       tabsh-ref:
         description: tabsh branch, tag or commit to embed
         required: false
@@ -56,12 +62,11 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      # One job per Mac kind. "both" on a tag push and on a plain run; a run
+      # can ask for one of them, which is half the runner minutes (macOS bills
+      # at 10x, and this repository is private).
       matrix:
-        include:
-          - arch: arm64
-            rust_target: aarch64-apple-darwin
-          - arch: x86_64
-            rust_target: x86_64-apple-darwin
+        include: ${{ fromJSON(inputs.arch == 'arm64' && '[{"arch":"arm64","rust_target":"aarch64-apple-darwin"}]' || inputs.arch == 'x86_64' && '[{"arch":"x86_64","rust_target":"x86_64-apple-darwin"}]' || '[{"arch":"arm64","rust_target":"aarch64-apple-darwin"},{"arch":"x86_64","rust_target":"x86_64-apple-darwin"}]') }}
     env:
       TABSH_REF: ${{ inputs.tabsh-ref || 'v1.8.1' }}
       SEARCH_ARCH: ${{ matrix.arch }}

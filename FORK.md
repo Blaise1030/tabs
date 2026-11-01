@@ -47,6 +47,23 @@ SEARCH_DEV=1 ./build.sh     # a real .app in build/, named for the branch
 ./build.sh                  # release-style build, ad-hoc signed
 ```
 
+### On GitHub Actions
+
+`.github/workflows/build.yml` builds the app where there is no Xcode-licensed Mac to hand: it
+clones [Blaise1030/tabsh](https://github.com/Blaise1030/tabsh), builds its daemon, and passes it
+to `build.sh` as `TABSH_BINARY`, so the download carries terminals and agents with it. The daemon
+is pinned to the `v1.8.1` tag by default; a manual run may name another branch, tag or commit.
+
+- **Actions → Build → Run workflow** builds without releasing and leaves `Tabs.zip` and
+  `Tabs.dmg` as run artifacts. Pick one architecture to halve the runner minutes (macOS bills at
+  10x on a private repository).
+- **Push a `v*` tag** builds both architectures and attaches `Tabs-<version>-arm64.zip/.dmg` and
+  `Tabs-<version>-x86_64.zip/.dmg` to a published release. A hand-started release is a draft.
+
+Builds are ad-hoc signed, not notarised. A download on another Mac needs the quarantine flag off
+once — `xattr -dr com.apple.quarantine /Applications/Tabs.app`, or right-click → Open — and then
+starts normally. The release notes say the same.
+
 Upstream's `CONTRIBUTING.md`, `README.md` and `docs` still describe Search and apply to code
 inherited from it.
 
