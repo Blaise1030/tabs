@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // A tabsh agent in a tab of the browser, drawn natively instead of in the
 // web app's panel: the daemon streams the same `UiChunk`s, and this file
@@ -23,6 +24,12 @@ struct TabshChatChunk {
     var message = ""
     var stopReason = ""
     var tool: [String: Any]?
+    /// An `elicitation`'s form (`requestedSchema`), and the `action` an
+    /// `elicitation_answered` chose with the `content` it sent back.
+    var schema: [String: Any]?
+    var action = ""
+    var content: [String: Any]?
+    var toolCallID = ""
 
     init?(line: String) {
         guard let data = line.data(using: .utf8),
@@ -35,6 +42,10 @@ struct TabshChatChunk {
         message = object["message"] as? String ?? ""
         stopReason = object["stop_reason"] as? String ?? ""
         tool = object["tool_call"] as? [String: Any]
+        schema = object["schema"] as? [String: Any]
+        action = object["action"] as? String ?? ""
+        content = object["content"] as? [String: Any]
+        toolCallID = object["tool_call_id"] as? String ?? ""
     }
 
     var toolID: String? {
@@ -99,22 +110,166 @@ private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
-/// A file waiting in the composer. It stays local until send, when it is
-/// uploaded and its path travels after the message as tabsh does.
-private struct TabshPendingAttachment: Identifiable, Equatable {
-    let id = UUID()
-    let url: URL
+// MARK: - The agent's question
 
-    var name: String { url.lastPathComponent }
-    var isImage: Bool {
-        tabshImageExtensions.contains(url.pathExtension.lowercased())
+/// A question the agent asked as an ACP form (`elicitation/create`): the
+/// words, and the fields it wants answered. The daemon relays the raw
+/// `requestedSchema`; this reads the shapes the ACP spec allows (text,
+/// number, yes/no, a pick from a list, picks from a list) and treats an
+/// unknown kind as plain text, so a newer agent still gets answered.
+struct TabshQuestionForm: Equatable {
+    struct Choice: Identifiable, Equatable {
+        /// The value sent back: an option's `const`, or its `enum` string.
+        let id: String
+        let title: String
+        let detail: String?
+    }
+
+    struct Field: Identifiable, Equatable {
+        enum Kind: Equatable {
+            case text
+            case number(integer: Bool)
+            case yesNo
+            case pick([Choice])
+            case picks([Choice])
+        }
+
+        let id: String
+        let title: String
+        let detail: String
+        let required: Bool
+        let kind: Kind
+    }
+
+    var message: String
+    var fields: [Field]
+
+    init?(message: String, schema: [String: Any]?) {
+        guard let schema, let properties = schema["properties"] as? [String: Any] else {
+            return nil
+        }
+        self.message = message
+        let required = Set(schema["required"] as? [String] ?? [])
+        // JSON objects arrive unordered. Sorting keeps the fields steady
+        // across rebuilds of the transcript, which is all a form needs.
+        fields = properties.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            .compactMap { key in
+                guard let property = properties[key] as? [String: Any] else { return nil }
+                return Field(id: key,
+                             title: Self.text(property["title"]) ?? key,
+                             detail: Self.text(property["description"]) ?? "",
+                             required: required.contains(key),
+                             kind: Self.kind(of: property))
+            }
+    }
+
+    /// What an answered question's card says: the values it was given, named
+    /// by their fields, or the word for a decline.
+    static func answerText(_ action: String,
+                           content: [String: Any]?,
+                           form: TabshQuestionForm?) -> String {
+        switch action {
+        case "decline": return "Declined"
+        case "cancel": return "Dismissed"
+        default: break
+        }
+        guard let content, !content.isEmpty else { return "Answered" }
+        if let form {
+            let lines = form.fields.compactMap { field -> String? in
+                guard let value = content[field.id] else { return nil }
+                return "\(field.title): \(answerValue(field, value))"
+            }
+            if !lines.isEmpty { return lines.joined(separator: "\n") }
+        }
+        // A key the form did not name (a custom answer, a newer shape).
+        return content.keys.sorted().compactMap { key in
+            content[key].map { "\(key): \(Self.plainAnswer($0))" }
+        }
+        .joined(separator: "\n")
+    }
+
+    private static func answerValue(_ field: TabshQuestionForm.Field, _ value: Any) -> String {
+        switch field.kind {
+        case let .pick(choices):
+            if let id = value as? String {
+                return choices.first { $0.id == id }?.title ?? id
+            }
+        case let .picks(choices):
+            if let ids = value as? [String] {
+                return ids.map { id in
+                    choices.first { $0.id == id }?.title ?? id
+                }
+                .joined(separator: ", ")
+            }
+        case .yesNo:
+            if let flag = value as? Bool { return flag ? "Yes" : "No" }
+        case .text, .number:
+            break
+        }
+        return plainAnswer(value)
+    }
+
+    private static func plainAnswer(_ value: Any) -> String {
+        switch value {
+        case let text as String: return text
+        case let flag as Bool: return flag ? "Yes" : "No"
+        case let number as NSNumber: return number.stringValue
+        case let list as [Any]: return list.map(plainAnswer).joined(separator: ", ")
+        default: return String(describing: value)
+        }
+    }
+
+    /// A yes to one field is a form that can be sent, not a form with no
+    /// fields: an empty schema still shows its message, with nothing to fill.
+    var isEmpty: Bool { fields.isEmpty }
+
+    private static func kind(of property: [String: Any]) -> Field.Kind {
+        switch text(property["type"]) {
+        case "boolean":
+            return .yesNo
+        case "number":
+            return .number(integer: false)
+        case "integer":
+            return .number(integer: true)
+        case "array":
+            let items = property["items"] as? [String: Any]
+            let choices = Self.choices(in: items ?? property)
+            return choices.isEmpty ? .text : .picks(choices)
+        default:
+            let choices = Self.choices(in: property)
+            return choices.isEmpty ? .text : .pick(choices)
+        }
+    }
+
+    /// A single select is `oneOf`/`anyOf` of `{const, title, description}`,
+    /// or a plain `enum` of values; a multi select puts the same lists
+    /// inside the array's `items`.
+    private static func choices(in property: [String: Any]) -> [Choice] {
+        for key in ["oneOf", "anyOf"] {
+            if let list = property[key] as? [[String: Any]] {
+                return list.compactMap { option in
+                    guard let value = text(option["const"]) ?? text(option["enum"]) else {
+                        return nil
+                    }
+                    return Choice(id: value,
+                                  title: text(option["title"]) ?? value,
+                                  detail: text(option["description"]))
+                }
+            }
+        }
+        let values = (property["enum"] as? [Any])?.compactMap(text) ?? []
+        let names = property["enumNames"] as? [Any] ?? []
+        return values.enumerated().map { index, value in
+            let name = index < names.count ? text(names[index]) : nil
+            return Choice(id: value, title: name ?? value, detail: nil)
+        }
+    }
+
+    private static func text(_ value: Any?) -> String? {
+        guard let text = value as? String else { return nil }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 }
-
-private let tabshImageExtensions: Set<String> = [
-    "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp",
-    "tif", "tiff", "heic",
-]
 
 // MARK: - Transcript
 
@@ -122,7 +277,7 @@ private let tabshImageExtensions: Set<String> = [
 /// updates keep one row as well, so a long command does not flood the chat.
 struct TabshChatRow: Identifiable, Equatable {
     enum Kind: Equatable {
-        case user, agent, tool, toolGroup, plan, permission, error
+        case user, agent, tool, toolGroup, plan, permission, question, error
     }
 
     let id: String
@@ -131,6 +286,11 @@ struct TabshChatRow: Identifiable, Equatable {
     var detail = ""
     var requestID = ""
     var queued = false
+    /// A question's fields, when the agent asked one.
+    var form: TabshQuestionForm?
+    /// The answer a question was given, already worded for the card
+    /// ("Draft storage: memory", "Declined"). Empty while it is open.
+    var answer = ""
     /// A run of consecutive tool calls, folded into one row (see Kind.toolGroup).
     var children: [TabshChatRow] = []
     /// "Delivered" under the newest outgoing bubble, as a message shows it.
@@ -154,6 +314,41 @@ final class TabshChats {
     /// this window's stream, and the transcript it was holding, are let go.
     func close(_ session: String) {
         live.removeValue(forKey: session)?.stop()
+    }
+}
+
+/// What has been typed into a session's composer and not sent yet, kept for
+/// the session rather than for the view. The pane is built again every time
+/// its tab comes back to the front, and a tab can be closed and reopened, so
+/// a half-written message lives here and is handed back when the composer is
+/// built — this launch or the next.
+@MainActor
+final class TabshDrafts {
+    static let shared = TabshDrafts()
+
+    private static let key = "tabshDrafts"
+
+    private let store = Store.settings
+    private var texts: [String: String]
+
+    init() {
+        texts = store.dictionary(forKey: Self.key) as? [String: String] ?? [:]
+    }
+
+    func text(for session: String) -> String {
+        texts[session] ?? ""
+    }
+
+    /// An empty draft is no draft: the key goes, so a sent message leaves
+    /// nothing behind and the map does not grow with every session touched.
+    func set(_ text: String, for session: String) {
+        guard texts[session] != text else { return }
+        if text.isEmpty {
+            texts.removeValue(forKey: session)
+        } else {
+            texts[session] = text
+        }
+        store.set(texts, forKey: Self.key)
     }
 }
 
@@ -307,6 +502,14 @@ final class TabshChat: ObservableObject {
 
     // MARK: Sending
 
+    /// Whether the next queued line may go: no turn is open, nothing is on
+    /// the wire, and the agent's echo of the last line has arrived. `busy`
+    /// cannot say so — a queued line is itself what keeps `busy` lit — so
+    /// these three are asked directly, or nothing would ever drain the queue.
+    nonisolated static func canDrain(open: Bool, posting: Bool, pending: Int, queued: Int) -> Bool {
+        !open && !posting && pending == 0 && queued > 0
+    }
+
     func send(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -358,6 +561,27 @@ final class TabshChat: ObservableObject {
             guard let self else { return }
             do {
                 try await Tabsh.approveChat(self.sessionID, requestID: requestID, allow: allow)
+                self.notice = nil
+            } catch {
+                self.notice = error.localizedDescription
+            }
+        }
+    }
+
+    /// Answers an ACP question: `accept` with the form's values, or
+    /// `decline`/`cancel` with none. The daemon records the answer, so the
+    /// card stops offering one in every window and after a relaunch.
+    func answer(_ requestID: String,
+                action: String,
+                content: [String: Any]? = nil) {
+        guard !requestID.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await Tabsh.answerChat(self.sessionID,
+                                           requestID: requestID,
+                                           action: action,
+                                           content: content)
                 self.notice = nil
             } catch {
                 self.notice = error.localizedDescription
@@ -439,6 +663,17 @@ final class TabshChat: ObservableObject {
         let answered = Set(chunks.compactMap {
             $0.type == "permission_answered" ? $0.requestID : nil
         })
+        // A question's answer, by the request it answers, so the card keeps
+        // showing what was chosen after the agent has moved on.
+        var answers: [String: (action: String, content: [String: Any]?)] = [:]
+        for chunk in chunks where chunk.type == "elicitation_answered" {
+            answers[chunk.requestID] = (chunk.action,
+                                       chunk.content as? [String: Any])
+        }
+        // The tool call behind a question would repeat its card.
+        let askedTools = Set(chunks.compactMap {
+            $0.type == "elicitation" ? $0.toolCallID : nil
+        }).filter { !$0.isEmpty }
         var rows: [TabshChatRow] = []
         var tools: [String: Int] = [:]
         var lastType = ""
@@ -459,6 +694,9 @@ final class TabshChat: ObservableObject {
                 }
                 if open { sawAgent = true }
             case "tool_call", "tool_call_update":
+                if !chunk.toolCallID.isEmpty, askedTools.contains(chunk.toolCallID) {
+                    break
+                }
                 let id = chunk.toolID ?? "tool-\(index)"
                 if let at = tools[id] {
                     if !chunk.toolSummary.isEmpty { rows[at].text = chunk.toolSummary }
@@ -487,6 +725,23 @@ final class TabshChat: ObservableObject {
                                   requestID: chunk.requestID))
             case "permission_answered":
                 break
+            case "elicitation":
+                if open { sawAgent = true }
+                let form = TabshQuestionForm(message: chunk.message, schema: chunk.schema)
+                var answer = ""
+                if let given = answers[chunk.requestID] {
+                    answer = TabshQuestionForm.answerText(given.action,
+                                                          content: given.content,
+                                                          form: form)
+                }
+                rows.append(.init(id: "question-\(index)",
+                                  kind: .question,
+                                  text: chunk.message,
+                                  requestID: chunk.requestID,
+                                  form: form,
+                                  answer: answer))
+            case "elicitation_answered":
+                break
             case "turn_end":
                 open = false
                 sawAgent = false
@@ -511,9 +766,17 @@ final class TabshChat: ObservableObject {
                               queued: true))
         }
         // The newest outgoing message carries the receipt, as the last blue
-        // bubble does in Messages. Older ones stay bare.
+        // bubble does in Messages. Older ones stay bare. A line behind an
+        // open turn is queued, not sent, and says so: "Sending" there was a
+        // promise the daemon had not been asked to keep yet.
         if let last = rows.lastIndex(where: { $0.kind == .user }) {
-            rows[last].receipt = rows[last].queued ? "Sending…" : "Delivered"
+            if !queue.isEmpty {
+                rows[last].receipt = "Queuing…"
+            } else if !pending.isEmpty {
+                rows[last].receipt = "Sending…"
+            } else {
+                rows[last].receipt = "Delivered"
+            }
         }
 
         self.rows = TabshChat.grouped(rows)
@@ -521,11 +784,13 @@ final class TabshChat: ObservableObject {
         waiting = (open || !pending.isEmpty || !queue.isEmpty) && !sawAgent
 
         // The agent has finished and nothing is on the wire: the next line
-        // waits for exactly this moment.
-        if !busy, !posting, !queue.isEmpty {
+        // waits for exactly this moment. See `canDrain` for why `busy` is
+        // not the test.
+        if Self.canDrain(open: open, posting: posting, pending: pending.count, queued: queue.count) {
             post(queue.removeFirst())
         }
     }
+
 }
 
 // MARK: - The tab
@@ -534,16 +799,26 @@ final class TabshChat: ObservableObject {
 struct TabshAgentPane: View {
     let sessionID: String
     @ObservedObject var browser: Browser
-    @ObservedObject private var sessions: TabshSessions
+    @ObservedObject private var sessions = TabshSessions.shared
     @StateObject private var chat: TabshChat
 
-    @State private var draft = ""
+    /// What is in the composer. Kept for the session rather than the view:
+    /// the pane is built again every time its tab comes back to the front (and
+    /// the tab can be closed and restored), so a message half typed has to
+    /// wait somewhere that outlives the view.
+    @State private var draft: String
     @State private var pinned = true
-    @State private var showingExplorer = true
+    /// The files column, shut until asked for: an agent's conversation is the
+    /// tab, and a column nobody opened shouldn't take half of it. What was
+    /// last chosen is kept for the next pane, this launch or the next, as the
+    /// column's width is (see TabshProjectPane) — the pane itself is built
+    /// again every time its tab comes back to the front.
+    @AppStorage("tabsh.agent.explorer") private var showingExplorer = false
     @State private var composerHeight: CGFloat = 32
     @State private var focusToken = 0
     @State private var attachments: [TabshPendingAttachment] = []
     @State private var uploading = false
+    @State private var droppingFiles = false
     /// Asks the transcript to go to the bottom from outside its scroll view:
     /// sending a message, or the jump button.
     @State private var scrollToken = 0
@@ -551,12 +826,8 @@ struct TabshAgentPane: View {
     init(sessionID: String, browser: Browser) {
         self.sessionID = sessionID
         _browser = ObservedObject(wrappedValue: browser)
-        _sessions = ObservedObject(wrappedValue: .shared)
         _chat = StateObject(wrappedValue: TabshChats.shared.chat(for: sessionID))
-    }
-
-    private var sessionInfo: Tabsh.SessionInfo? {
-        sessions.info(for: sessionID)
+        _draft = State(initialValue: TabshDrafts.shared.text(for: sessionID))
     }
 
     var body: some View {
@@ -573,7 +844,15 @@ struct TabshAgentPane: View {
                 composer
             }
         }
-        .onAppear { focusToken += 1 }
+        .onAppear {
+            draft = TabshDrafts.shared.text(for: sessionID)
+            focusToken += 1
+        }
+        // Every keystroke is kept: the store writes the map through
+        // UserDefaults, which holds it in memory and flushes it on its own.
+        .onChange(of: draft) { _, text in
+            TabshDrafts.shared.set(text, for: sessionID)
+        }
     }
 
     private var transcript: some View {
@@ -609,6 +888,12 @@ struct TabshAgentPane: View {
                     .padding(.top, 14)
                     .padding(.bottom, 14)
                 }
+                // The list slides into the bar above and the composer
+                // below: a hard edge cut the text off mid-line, so each end
+                // of the viewport fades to the pane's own ground instead, as
+                // the editor's text fades under its header (see Editor).
+                .overlay(alignment: .top) { edgeFade(top: true) }
+                .overlay(alignment: .bottom) { edgeFade(top: false) }
                 .coordinateSpace(name: "chatScroll")
                 .scrollIndicators(.never)
                 .onPreferenceChange(ChatBottomKey.self) { bottom in
@@ -657,98 +942,35 @@ struct TabshAgentPane: View {
         }
     }
 
-    /// The tab's own bar: the agent's name as plain text, and the selects
-    /// its ACP session advertises. The selects stay hidden until the agent
-    /// has answered; a mode is shown only when the agent has one.
+    /// How far the conversation fades before it meets the chrome: solid at
+    /// the edge the bar or the composer sits against, gone by the first line
+    /// that shows.
+    private static let fade: CGFloat = 18
+
+    /// One end of the transcript, faded to the ground the pane is drawn on.
+    private func edgeFade(top: Bool) -> some View {
+        LinearGradient(
+            colors: top
+                ? [Palette.ground, Palette.ground.opacity(0)]
+                : [Palette.ground.opacity(0), Palette.ground],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(height: Self.fade)
+        .allowsHitTesting(false)
+    }
+
+    /// The tab's own bar: shared with the TUI agent pane. The agent's model
+    /// and mode are not up here: they sit in the composer, beside the field
+    /// they change (see `selects`). The status select is: it is the card's,
+    /// not the agent's, and the terminal pane leaves the header bare.
     private var header: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    if let info = sessionInfo {
-                        TabshStatusMark(status: info.state, size: 11)
-                    }
-                    Text(chat.agentName)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Palette.ink)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                if let info = sessionInfo, !info.meta.isEmpty {
-                    Text(info.meta)
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(Palette.muted)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-            }
-            .help(sessionInfo?.tooltip ?? chat.agentName)
-
-            Spacer(minLength: 10)
-
-            if let models = chat.models, !models.options.isEmpty {
-                TabshModelPicker(select: models,
-                                 busy: chat.busy || chat.changingOption,
-                                 choose: chat.selectModel)
-            }
-            if let modes = chat.modes, !modes.options.isEmpty {
-                optionMenu(.mode, modes)
-            }
-            if !showingExplorer {
-                ExplorerShowButton { showingExplorer = true }
-            }
+        TabshSessionHeader(sessionID: sessionID,
+                           title: sessions.info(for: sessionID)?.label ?? chat.agentName,
+                           showingExplorer: $showingExplorer,
+                           statusInMenu: false) {
+            TabshHeaderStatusSelect(sessionID: sessionID)
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 8)
-    }
-
-    private enum OptionKind {
-        case model, mode
-
-        var title: String { self == .model ? "Model" : "Agent mode" }
-        var symbol: String { self == .model ? "cpu" : "shield.lefthalf.filled" }
-    }
-
-    private func optionMenu(_ kind: OptionKind, _ select: Tabsh.ChatSelect) -> some View {
-        let current = select.options.first { $0.id == select.current }?.name
-            ?? select.current
-            ?? kind.title
-
-        return Menu {
-            ForEach(select.options) { option in
-                Button {
-                    if kind == .model {
-                        chat.selectModel(option.id)
-                    } else {
-                        chat.selectMode(option.id)
-                    }
-                } label: {
-                    if option.id == select.current {
-                        Label(option.name, systemImage: "checkmark")
-                    } else {
-                        Text(option.name)
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: kind.symbol)
-                    .font(.system(size: 9, weight: .medium))
-                Text(current)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .semibold))
-            }
-            .font(.system(size: 10.5, weight: .medium))
-            .foregroundStyle(Palette.muted)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(Palette.hover))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .help(kind.title)
-        .disabled(chat.busy || chat.changingOption)
     }
 
     /// Messages by one sender sit close; a change of sender gets a breath,
@@ -783,6 +1005,14 @@ struct TabshAgentPane: View {
         .padding(.horizontal, 32)
     }
 
+    /// The ground the sidebar column wears behind its rows, which the
+    /// composer's card takes too: one surface for the app's chrome, rather
+    /// than a tile of the composer's own (see SideBar's `ground`).
+    private var composerGround: Color {
+        if let theme = browser.chromeTheme { return Color(nsColor: theme.color) }
+        return browser.asCards ? Palette.frame : Palette.ground
+    }
+
     private var composer: some View {
         VStack(spacing: 7) {
             if let notice = chat.notice {
@@ -794,50 +1024,41 @@ struct TabshAgentPane: View {
             }
 
             // The composer is one card: the attachments, the plus, the
-            // field and the send all live inside its squircle.
+            // field and the send all live inside its squircle. Drops and
+            // pasted images land as chips here, not as raw paths in the
+            // field (see TabshDrop).
             VStack(alignment: .leading, spacing: 6) {
                 if !attachments.isEmpty { attachmentBar }
 
-                HStack(alignment: .bottom, spacing: 6) {
+                // The plus and the field sit close: the field's own text
+                // inset is small too (see TabshComposerField), so the
+                // placeholder starts a few points in from the disc.
+                HStack(alignment: .bottom, spacing: 4) {
                     Button(action: chooseFiles) {
                         Image(systemName: "plus")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Palette.muted)
-                            .frame(width: 26, height: 26)
-                            .background(Circle().fill(Palette.ground))
-                            .overlay(Circle().stroke(Palette.hairline, lineWidth: 1))
+                            .composerDisc()
                     }
                     .buttonStyle(.plain)
                     .disabled(uploading)
                     .help("Attach images or files")
                     .accessibilityLabel("Attach images or files")
 
-                    ZStack(alignment: .topLeading) {
-                        TabshComposerField(text: $draft,
-                                           height: $composerHeight,
-                                           focus: focusToken,
-                                           onSubmit: send)
-                        if draft.isEmpty {
-                            Text("Message")
-                                .font(.system(size: 12.5))
-                                .foregroundStyle(Palette.muted)
-                                // Lines up with the field's own text inset,
-                                // so the placeholder does not jump when the
-                                // first character lands.
-                                .padding(.leading, 13)
-                                .padding(.top, 8)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                    .frame(height: composerHeight)
+                    TabshComposerField(text: $draft,
+                                       height: $composerHeight,
+                                       focus: focusToken,
+                                       placeholder: "Message",
+                                       onSubmit: send,
+                                       onFiles: attach)
+                        .frame(height: composerHeight)
 
                     if chat.busy {
                         Button(action: chat.stopTurn) {
                             Image(systemName: "stop.fill")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(Palette.muted)
-                                .frame(width: 27, height: 27)
-                                .background(Circle().fill(Palette.ground))
+                                .composerDisc()
                         }
                         .buttonStyle(.plain)
                         .help("Stop the agent")
@@ -847,18 +1068,15 @@ struct TabshAgentPane: View {
                     if uploading {
                         ProgressView()
                             .controlSize(.small)
-                            .frame(width: 28, height: 28)
-                            .background(Circle().fill(Palette.ground))
+                            .composerDisc()
                     } else {
                         Button(action: send) {
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundStyle(canSend ? .white : Palette.faint)
-                                .frame(width: 28, height: 28)
-                                .background(
-                                    Circle().fill(canSend
-                                        ? Color(nsColor: .controlAccentColor)
-                                        : Palette.ground)
+                                .composerDisc(
+                                    fill: canSend ? Color(nsColor: .controlAccentColor) : Palette.ground,
+                                    ring: !canSend
                                 )
                         }
                         .buttonStyle(.plain)
@@ -867,19 +1085,45 @@ struct TabshAgentPane: View {
                         .accessibilityLabel("Send")
                     }
                 }
+
+                // The agent's model and mode sit under the field, in reach of
+                // the words they will send but out of the way of writing them.
+                // Both stay hidden until the agent has answered: an ACP
+                // session says what it offers only after its first turn.
+                if chat.models != nil || chat.modes != nil {
+                    selects
+                        .padding(.bottom, 2)
+                }
             }
             .padding(.horizontal, 5)
             .padding(.vertical, 5)
             .frame(maxWidth: .infinity)
-            .background(Superellipse().fill(Palette.hover))
-            .overlay(Superellipse().stroke(Palette.hairline, lineWidth: 1))
-            .shadow(color: .black.opacity(CardEdge.shadow), radius: 2, y: 1)
+            // The shadow is cast by the card's shape behind the field, never
+            // by the card's own layers: laid over them, it fell from the plus,
+            // the stop and the send as well, and the round buttons read as
+            // raised on a card that is meant to be flat (see CardEdge).
+            .background(
+                Superellipse()
+                    .fill(droppingFiles ? Palette.wash : composerGround)
+                    .shadow(color: .black.opacity(CardEdge.shadow), radius: 2, y: 1)
+            )
+            .overlay(Superellipse().stroke(
+                droppingFiles ? Color(nsColor: .controlAccentColor).opacity(0.55) : Palette.hairline,
+                lineWidth: 1
+            ))
+            .onDrop(of: [.fileURL, .image, .png, .jpeg, .gif, .webP, .tiff],
+                    isTargeted: $droppingFiles) { providers in
+                TabshDrop.urls(from: providers) { attach($0) }
+                return true
+            }
         }
+        // No bar behind the field: the composer's own card is the only
+        // surface, so the conversation runs down to the same ground rather
+        // than ending on a grey footer.
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 22)
         .padding(.top, 9)
         .padding(.bottom, 12)
-        .background(Palette.ground)
     }
 
     private var attachmentBar: some View {
@@ -896,6 +1140,25 @@ struct TabshAgentPane: View {
         }
         .scrollIndicators(.never)
         .frame(height: 58)
+    }
+
+    /// The model and the mode the agent advertises, the same muted capsules
+    /// the header used to wear, under the composer's field.
+    private var selects: some View {
+        HStack(spacing: 6) {
+            if let models = chat.models, !models.options.isEmpty {
+                TabshModelPicker(select: models,
+                                 busy: chat.busy || chat.changingOption,
+                                 choose: chat.selectModel)
+            }
+            if let modes = chat.modes, !modes.options.isEmpty {
+                TabshModePicker(select: modes,
+                                busy: chat.busy || chat.changingOption,
+                                choose: chat.selectMode)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 1)
     }
 
     private var canSend: Bool {
@@ -960,11 +1223,7 @@ struct TabshAgentPane: View {
         panel.message = "Attach images or files to the message"
         let add: (NSApplication.ModalResponse) -> Void = { response in
             guard response == .OK else { return }
-            for url in panel.urls
-            where !attachments.contains(where: { $0.url == url }) {
-                attachments.append(TabshPendingAttachment(url: url))
-            }
-            focusToken += 1
+            attach(panel.urls)
         }
         if let window = NSApp.keyWindow {
             panel.beginSheetModal(for: window, completionHandler: add)
@@ -972,11 +1231,20 @@ struct TabshAgentPane: View {
             add(panel.runModal())
         }
     }
+
+    private func attach(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        for url in urls where !attachments.contains(where: { $0.url == url }) {
+            attachments.append(TabshPendingAttachment(url: url))
+        }
+        focusToken += 1
+    }
 }
 
 /// One file waiting in the composer: a picture of itself, or a small paper
-/// chip, with the cross that takes it back out.
-private struct TabshAttachmentChip: View {
+/// chip, with the cross that takes it back out. Shared by the agent chat and
+/// New Agent so a drop looks the same in both.
+struct TabshAttachmentChip: View {
     let attachment: TabshPendingAttachment
     let remove: () -> Void
 
@@ -1180,11 +1448,132 @@ private struct TabshModelPicker: View {
     }
 }
 
+/// The agent's mode, opened the way the model picker opens: a pill in the
+/// header and a list under it. A `Menu` here drew the label in the system's
+/// own type — a raw shield and a larger, darker word — so the two selects
+/// side by side were two shapes. A button keeps the pill the pill.
+private struct TabshModePicker: View {
+    let select: Tabsh.ChatSelect
+    let busy: Bool
+    let choose: (String) -> Void
+
+    @State private var open = false
+
+    private var current: String {
+        select.options.first { $0.id == select.current }?.name
+            ?? select.current
+            ?? "Mode"
+    }
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "shield.lefthalf.filled")
+                    .font(.system(size: 9, weight: .medium))
+                Text(current)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .semibold))
+            }
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(Palette.muted)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(Palette.hover))
+        }
+        .buttonStyle(.plain)
+        .help("Agent mode")
+        .disabled(busy)
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            TabshModeList(options: select.options,
+                          current: select.current) { id in
+                choose(id)
+                open = false
+            }
+        }
+    }
+}
+
+/// The modes' list, shared by the chat's header and the New Agent card: the
+/// same heading, rows and tick the model picker uses, without the search a
+/// two- or three-item list does not need.
+struct TabshModeList: View {
+    let options: [Tabsh.ChatSelect.Choice]
+    let current: String?
+    let choose: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("MODE")
+                .font(.system(size: 9.5, weight: .semibold))
+                .tracking(0.5)
+                .foregroundStyle(Palette.muted)
+                .padding(.horizontal, 10)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+
+            ForEach(options) { option in
+                Button { choose(option.id) } label: {
+                    HStack(spacing: 8) {
+                        Text(option.name)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Palette.ink)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 8)
+                        if option.id == current {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .foregroundStyle(Palette.muted)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(option.id == current ? Palette.hover : .clear)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.bottom, 8)
+        .frame(width: 240)
+    }
+}
+
 private struct ChatBottomKey: PreferenceKey {
     static var defaultValue: CGFloat = .greatestFiniteMagnitude
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
     }
+}
+
+/// One of the round buttons that end the composer. The plus, the stop, the
+/// spinner and the send are all this disc, so they sit on one centre line —
+/// they used to be 26 and 28 points, bottom-aligned in the field's row,
+/// which put them a point apart and both of them low.
+private extension View {
+    func composerDisc(fill: Color = Palette.ground, ring: Bool = true) -> some View {
+        self
+            .frame(width: ComposerDisc.size, height: ComposerDisc.size)
+            .background(Circle().fill(fill))
+            .overlay {
+                if ring {
+                    Circle().strokeBorder(Palette.hairline, lineWidth: 1)
+                }
+            }
+            // Bottom-aligned in the field's row: lifted the two points that
+            // put the disc's centre on the text's line rather than its floor.
+            .padding(.bottom, ComposerDisc.lift)
+    }
+}
+
+private enum ComposerDisc {
+    static let size: CGFloat = 28
+    static let lift: CGFloat = 2
 }
 
 // MARK: - Rows
@@ -1219,6 +1608,8 @@ private struct TabshChatRowView: View {
             .padding(.vertical, 3)
         case .permission:
             permission
+        case .question:
+            TabshQuestionCard(row: row, chat: chat)
         case .error:
             error
         }
@@ -1444,9 +1835,7 @@ private struct TabshChatRowView: View {
     }
 
     private var agentBubble: Color {
-        scheme == .dark
-            ? Color(red: 0.16, green: 0.16, blue: 0.17)
-            : Color(red: 0.90, green: 0.90, blue: 0.92)
+        agentSurface(scheme)
     }
 
     private func toolSubtitle(_ item: TabshChatRow) -> String {
@@ -1477,6 +1866,372 @@ private struct TabshChatRowView: View {
         answered = true
         chat.approve(row.requestID, allow: allow)
     }
+}
+
+// MARK: - A question
+
+/// The agent's question, drawn as a form instead of a folded tool row: its
+/// words, one control per field, and the answer. What has been typed or
+/// picked lives in the card until it is sent, so the transcript rebuilding
+/// on every streamed token does not wipe a half-filled answer.
+private struct TabshQuestionCard: View {
+    let row: TabshChatRow
+    @ObservedObject var chat: TabshChat
+
+    @Environment(\.colorScheme) private var scheme
+    @State private var values: [String: Value] = [:]
+    /// The answer was sent from here and the transcript has not echoed it
+    /// yet; the row's own `answer` takes over once it does.
+    @State private var sent = false
+
+    /// What a field holds before it becomes JSON. `number` fields type into
+    /// `.text` and are parsed on send, so a half-typed "1." is not lost.
+    private enum Value: Equatable {
+        case text(String)
+        case yesNo(Bool)
+        case pick(String)
+        case picks(Set<String>)
+    }
+
+    private var form: TabshQuestionForm? { row.form }
+    private var fields: [TabshQuestionForm.Field] { form?.fields ?? [] }
+    private var isAnswered: Bool { sent || !row.answer.isEmpty }
+    private var message: String {
+        let text = row.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? "The agent has a question" : text
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "questionmark.bubble")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color(nsColor: .controlAccentColor))
+                    .padding(.top, 1)
+                Text(message)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Palette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if isAnswered {
+                answer
+            } else {
+                ForEach(fields) { field in
+                    fieldView(field)
+                }
+                footer
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: 520, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(agentSurface(scheme))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Palette.hairline)
+        )
+        .padding(.leading, 5)
+    }
+
+    /// The card once it has been answered: the question stays, with what was
+    /// chosen under it, as a permission that says "Answered" does.
+    private var answer: some View {
+        let declined = row.answer == "Declined" || row.answer == "Dismissed"
+        return HStack(alignment: .top, spacing: 6) {
+            Image(systemName: declined ? "xmark.circle" : "checkmark.circle.fill")
+                .font(.system(size: 10.5))
+                .foregroundStyle(declined ? Palette.muted : Color(nsColor: .controlAccentColor))
+                .padding(.top, 0.5)
+            Text(row.answer.isEmpty ? "Answered" : row.answer)
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Palette.ground)
+        )
+    }
+
+    @ViewBuilder
+    private func fieldView(_ field: TabshQuestionForm.Field) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            // The header often repeats the message ("Draft storage" over a
+            // question about drafts); say it once.
+            if field.title != message {
+                Text(field.title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Palette.ink)
+            }
+            if !field.detail.isEmpty, field.detail != message {
+                Text(field.detail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            switch field.kind {
+            case let .pick(choices):
+                choiceList(field, choices: choices, multiple: false)
+            case let .picks(choices):
+                choiceList(field, choices: choices, multiple: true)
+            case .yesNo:
+                yesNo(field)
+            case .text, .number:
+                textField(field)
+            }        }
+    }
+
+    private func choiceList(_ field: TabshQuestionForm.Field,
+                            choices: [TabshQuestionForm.Choice],
+                            multiple: Bool) -> some View {
+        VStack(spacing: 3) {
+            ForEach(choices) { choice in
+                let picked = isPicked(choice.id, in: field, multiple: multiple)
+                Button {
+                    pick(choice.id, in: field, multiple: multiple)
+                } label: {
+                    HStack(alignment: .top, spacing: 7) {
+                        Image(systemName: picked
+                              ? (multiple ? "checkmark.square.fill" : "checkmark.circle.fill")
+                              : (multiple ? "square" : "circle"))
+                            .font(.system(size: 11))
+                            .foregroundStyle(picked
+                                             ? Color(nsColor: .controlAccentColor)
+                                             : Palette.faint)
+                            .padding(.top, 0.5)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(choice.title)
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(Palette.ink)
+                            if let detail = choice.detail, !detail.isEmpty {
+                                Text(detail)
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(Palette.muted)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .multilineTextAlignment(.leading)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(picked ? Palette.hover : Palette.ground)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(picked
+                                    ? Color(nsColor: .controlAccentColor).opacity(0.45)
+                                    : Palette.hairline,
+                                    lineWidth: 1)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(isAnswered)
+                .accessibilityAddTraits(picked ? .isSelected : [])
+            }
+        }
+    }
+
+    private func yesNo(_ field: TabshQuestionForm.Field) -> some View {
+        HStack(spacing: 6) {
+            ForEach([true, false], id: \.self) { flag in
+                let picked = values[field.id] == .yesNo(flag)
+                Button {
+                    values[field.id] = .yesNo(flag)
+                } label: {
+                    Text(flag ? "Yes" : "No")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(picked ? Palette.ink : Palette.muted)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule().fill(picked ? Palette.hover : Palette.ground)
+                        )
+                        .overlay(Capsule().stroke(Palette.hairline, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(isAnswered)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func textField(_ field: TabshQuestionForm.Field) -> some View {
+        let binding = Binding<String>(
+            get: {
+                if case let .text(text)? = values[field.id] { return text }
+                return ""
+            },
+            set: { values[field.id] = .text($0) }
+        )
+        return TextField(field.required ? "Your answer" : "Optional",
+                         text: binding,
+                         axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(.system(size: 11.5))
+            .foregroundStyle(Palette.ink)
+            .lineLimit(1...4)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Palette.ground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Palette.hairline, lineWidth: 1)
+            )
+            .disabled(isAnswered)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 8)
+            Button("Decline") { send("decline") }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 11))
+                Button(action: { send("accept") }) {
+                    Text("Send")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule().fill(canSend
+                                           ? Color(nsColor: .controlAccentColor)
+                                           : Color(nsColor: .controlAccentColor).opacity(0.35))
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
+                .help(canSend ? "Send the answer" : "Answer a field first")
+        }
+    }
+
+    // MARK: Filling and sending
+
+    private func isPicked(_ id: String,
+                          in field: TabshQuestionForm.Field,
+                          multiple: Bool) -> Bool {
+        switch values[field.id] {
+        case let .pick(picked)?: return !multiple && picked == id
+        case let .picks(picked)?: return multiple && picked.contains(id)
+        default: return false
+        }
+    }
+
+    private func pick(_ id: String,
+                      in field: TabshQuestionForm.Field,
+                      multiple: Bool) {
+        guard multiple else {
+            values[field.id] = .pick(id)
+            return
+        }
+        var picked: Set<String>
+        if case let .picks(current)? = values[field.id] {
+            picked = current
+        } else {
+            picked = []
+        }
+        if picked.contains(id) {
+            picked.remove(id)
+        } else {
+            picked.insert(id)
+        }
+        values[field.id] = .picks(picked)
+    }
+
+    /// Every required field must be answered, and a form needs at least one
+    /// answer to send: an empty accept tells the agent nothing, and "Decline"
+    /// is the honest way to say nothing.
+    private var canSend: Bool {
+        guard !fields.isEmpty else { return false }
+        let answeredAll = fields.allSatisfy { field in
+            guard field.required else { return true }
+            switch (field.kind, values[field.id]) {
+            case (.pick, .pick), (.picks, .picks), (.yesNo, .yesNo):
+                return true
+            case (.number, let .text(raw)?):
+                return Double(raw.trimmingCharacters(in: .whitespaces)) != nil
+            case (_, let .text(raw)?):
+                return !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            default:
+                return false
+            }
+        }
+        return answeredAll && fields.contains { isAnswered($0) }
+    }
+
+    private func isAnswered(_ field: TabshQuestionForm.Field) -> Bool {
+        switch values[field.id] {
+        case let .text(raw)?:
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return false }
+            if case .number = field.kind { return Double(trimmed) != nil }
+            return true
+        case .yesNo?, .pick?: return true
+        case let .picks(ids)?: return !ids.isEmpty
+        case nil: return false
+        }
+    }
+
+    private func send(_ action: String) {
+        guard action == "decline" || canSend else { return }
+        sent = true
+        chat.answer(row.requestID,
+                    action: action,
+                    content: action == "accept" ? content() : nil)
+    }
+
+    private func content() -> [String: Any] {
+        var content: [String: Any] = [:]
+        for field in fields {
+            switch (field.kind, values[field.id]) {
+            case let (.number(integer), .text(raw)?):
+                let trimmed = raw.trimmingCharacters(in: .whitespaces)
+                if let number = Double(trimmed) {
+                    if integer {
+                        content[field.id] = Int(number) ?? number
+                    } else {
+                        content[field.id] = number
+                    }
+                }
+            case let (_, .text(raw)?):
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { content[field.id] = trimmed }
+            case let (_, .yesNo(flag)?):
+                content[field.id] = flag
+            case let (_, .pick(id)?):
+                content[field.id] = id
+            case let (_, .picks(ids)?):
+                if !ids.isEmpty { content[field.id] = ids.sorted() }
+            default:
+                break
+            }
+        }
+        return content
+    }
+}
+
+/// The grey an agent's own surface sits on: its bubbles, and the cards that
+/// ask something.
+private func agentSurface(_ scheme: ColorScheme) -> Color {
+    scheme == .dark
+        ? Color(red: 0.16, green: 0.16, blue: 0.17)
+        : Color(red: 0.90, green: 0.90, blue: 0.92)
 }
 
 // MARK: - Markdown
@@ -1917,12 +2672,15 @@ enum MarkdownParser {
 
 /// A growing message field: one line when there is one, up to eight when
 /// there are more, and a scroll beyond that. Return sends, as in the web
-/// panel; Shift-Return and Option-Return write a line break.
+/// panel; Shift-Return and Option-Return write a line break. Files dropped
+/// or images pasted become attachments rather than raw paths in the text.
 private struct TabshComposerField: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
     var focus: Int
+    var placeholder: String
     let onSubmit: () -> Void
+    var onFiles: (([URL]) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -1939,8 +2697,11 @@ private struct TabshComposerField: NSViewRepresentable {
             coordinator?.updateHeight()
         }
 
-        let text = NSTextView()
+        let text = TabshAttachTextView()
         text.delegate = context.coordinator
+        text.onFiles = { [weak coordinator = context.coordinator] urls in
+            coordinator?.parent.onFiles?(urls)
+        }
         text.isRichText = false
         text.isEditable = true
         text.isSelectable = true
@@ -1950,7 +2711,14 @@ private struct TabshComposerField: NSViewRepresentable {
         text.font = NSFont.systemFont(ofSize: 12.5)
         text.textColor = .labelColor
         text.insertionPointColor = .controlAccentColor
-        text.textContainerInset = NSSize(width: 13, height: 8)
+        // A small inset: the plus disc and the send disc already hold the
+        // text off the card's edge, and a wide one left a gap between the
+        // plus and the placeholder that read as two separate controls.
+        text.textContainerInset = NSSize(width: 5, height: 8)
+        // Drawn by the field itself, so it starts exactly where the caret
+        // does (see TabshAttachTextView.draw).
+        text.placeholder = placeholder
+        text.placeholderColor = NSColor(Palette.muted)
         text.isVerticallyResizable = true
         text.isHorizontallyResizable = false
         text.minSize = NSSize(width: 0, height: 0)
@@ -1974,6 +2742,7 @@ private struct TabshComposerField: NSViewRepresentable {
             text.mathExpressionCompletionType = .no
         }
         text.string = self.text
+        text.registerFileDrops()
 
         scroll.documentView = text
         context.coordinator.textView = text
@@ -1986,12 +2755,17 @@ private struct TabshComposerField: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
-        guard let textView = scroll.documentView as? NSTextView else { return }
+        guard let textView = scroll.documentView as? TabshAttachTextView else { return }
         context.coordinator.parent = self
+        textView.onFiles = { [weak coordinator = context.coordinator] urls in
+            coordinator?.parent.onFiles?(urls)
+        }
         if textView.string != text {
             textView.string = text
             textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+            textView.needsDisplay = true
         }
+        textView.placeholder = placeholder
         if context.coordinator.lastFocus != focus {
             context.coordinator.lastFocus = focus
             DispatchQueue.main.async {
@@ -2059,13 +2833,16 @@ private final class ComposerScrollView: NSScrollView {
 
 private struct TabshThinkingRow: View {
     @Environment(\.colorScheme) private var scheme
+    /// Which dot is brightest right now. The three take turns, so the bubble
+    /// reads as an agent working rather than a frozen ellipsis.
+    @State private var step = 0
 
     var body: some View {
         HStack {
             HStack(spacing: 4) {
                 ForEach(0..<3, id: \.self) { dot in
                     Circle()
-                        .fill(Palette.muted.opacity(dot == 0 ? 0.9 : dot == 1 ? 0.6 : 0.32))
+                        .fill(Palette.muted.opacity(fade(for: dot)))
                         .frame(width: 5, height: 5)
                 }
             }
@@ -2081,72 +2858,132 @@ private struct TabshThinkingRow: View {
             )
             Spacer(minLength: 56)
         }
+        // A slow turn: a third of a second a dot, then round again. Reduced
+        // motion keeps the first dot lit instead of pulsing at all.
+        .task {
+            guard !Motion.reduced else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(320))
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeInOut(duration: 0.26)) {
+                    step = (step + 1) % 3
+                }
+            }
+        }
+    }
+
+    /// The lit dot, then a trail behind it: how far a dot is from the step
+    /// says how bright it stays.
+    private func fade(for dot: Int) -> Double {
+        switch (dot - step + 3) % 3 {
+        case 0: return 0.9
+        case 1: return 0.55
+        default: return 0.3
+        }
     }
 }
 
 
 // MARK: - Pictures in a message
 
-/// Image references a message carries: a markdown image, or a bare path the
-/// tabsh app wrote when a screenshot was attached. Only files and web
-/// addresses; nothing else is opened.
-@MainActor
+/// The extensions a message's pictures carry, in the shape a regular
+/// expression wants them.
+private let imageFileExtensions = #"(?:png|jpe?g|gif|webp|heic|tiff?|svg|bmp)"#
+
+/// A markdown image anywhere in a line: `![what it is](/where it is.png)`.
+private let markdownImage = try? NSRegularExpression(pattern: #"!\[[^\]]*\]\(([^)]+)\)"#)
+
+/// A bare path or address in the middle of a line, which cannot hold a
+/// space: a whole line is read separately, spaces and all (see imageLine).
+private let bareImagePath = try? NSRegularExpression(
+    pattern: #"(?i)(?:file://)?(?:/|~/)[^\s)\]\"']+\."# + imageFileExtensions + #"\b"#
+)
+
 /// The message without the trailing image paths the composer appended.
 /// The paths still go to the agent; the bubble was showing them as words
 /// above the pictures they already stand for.
-private func textWithoutImagePaths(_ text: String) -> String {
-    guard let regex = try? NSRegularExpression(
-        pattern: #"(?i)^\s*(?:file://)?(?:/|~/)[^\s)\]\"']+\.(?:png|jpe?g|gif|webp|heic|tiff?|svg|bmp)\s*$"#
-    ) else { return text }
-
+func textWithoutImagePaths(_ text: String) -> String {
     let kept = text
         .split(separator: "\n", omittingEmptySubsequences: false)
-        .filter { line in
-            let string = String(line)
-            let range = NSRange(location: 0, length: (string as NSString).length)
-            return regex.firstMatch(in: string, range: range) == nil
-        }
+        .filter { imageLine(String($0)) == nil }
     return kept.joined(separator: "\n")
         .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
-private func imageRefs(in text: String) -> [URL] {
+/// Picture references a message carries: a markdown image, or a bare path
+/// the tabsh app wrote when a screenshot was attached. Only files that are
+/// there and web addresses; nothing else is opened.
+func imageRefs(in text: String) -> [URL] {
     var found: [URL] = []
     var seen = Set<String>()
 
-    func add(_ raw: String) {
-        var text = raw.trimmingCharacters(in: CharacterSet(charactersIn: "<>()[]\"' "))
-        text = text.removingPercentEncoding ?? text
-        guard !text.isEmpty else { return }
-        let url: URL?
-        if text.hasPrefix("http://") || text.hasPrefix("https://") {
-            url = URL(string: text)
-        } else if text.hasPrefix("file://") {
-            url = URL(string: text)
-        } else if text.hasPrefix("/") || text.hasPrefix("~") {
-            let path = (text as NSString).expandingTildeInPath
-            guard FileManager.default.fileExists(atPath: path) else { return }
-            url = URL(fileURLWithPath: path)
-        } else {
-            url = nil
-        }
+    func add(_ url: URL?) {
         guard let url, seen.insert(url.absoluteString).inserted else { return }
         found.append(url)
     }
 
-    if let regex = try? NSRegularExpression(pattern: #"!\[[^\]]*\]\(([^)\s]+)\)"#) {
-        let ns = text as NSString
-        regex.enumerateMatches(in: text, range: NSRange(location: 0, length: ns.length)) { match, _, _ in
+    func add(_ raw: String) {
+        add(imageURL(raw))
+    }
+
+    for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let string = String(line)
+        // The composer writes one path a line after what was asked, so a
+        // line that is only a picture is taken whole: uploads live under
+        // Application Support, and that folder's name has a space in it.
+        if let picture = imageLine(string) {
+            add(picture)
+            continue
+        }
+        let ns = string as NSString
+        let whole = NSRange(location: 0, length: ns.length)
+        markdownImage?.enumerateMatches(in: string, range: whole) { match, _, _ in
             if let range = match?.range(at: 1) { add(ns.substring(with: range)) }
         }
-    }
-    if let regex = try? NSRegularExpression(pattern: #"(?i)(?:file://)?(?:/|~/)[^\s)\]\"']+\.(?:png|jpe?g|gif|webp|heic|tiff?)\b"#) {
-        let ns = text as NSString
-        regex.enumerateMatches(in: text, range: NSRange(location: 0, length: ns.length)) { match, _, _ in
+        bareImagePath?.enumerateMatches(in: string, range: whole) { match, _, _ in
             if let range = match?.range { add(ns.substring(with: range)) }
         }
     }
     return found
+}
+
+/// The picture a whole line names, or nil when the line is words. A path
+/// may have spaces in it — the daemon saves uploads under Application
+/// Support — so the line is read as one thing rather than split on spaces.
+private func imageLine(_ line: String) -> URL? {
+    let text = line.trimmingCharacters(in: .whitespaces)
+    guard !text.isEmpty else { return nil }
+    let ns = text as NSString
+    let whole = NSRange(location: 0, length: ns.length)
+    if text.hasPrefix("!["),
+       let match = markdownImage?.firstMatch(in: text, range: whole),
+       match.range == whole,
+       let url = imageURL(ns.substring(with: match.range(at: 1))) {
+        return url
+    }
+    return imageURL(text)
+}
+
+/// The URL a path or address names, when it names a picture: an extension
+/// an image has, and a file that is really there for a local path. The
+/// punctuation a path picks up (markdown's brackets, a shell's quotes) is
+/// taken off first.
+private func imageURL(_ raw: String) -> URL? {
+    var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    text = text.trimmingCharacters(in: CharacterSet(charactersIn: "<>()[]\"'"))
+    text = text.removingPercentEncoding ?? text
+    guard !text.isEmpty,
+          text.range(of: #"(?i)\."# + imageFileExtensions + #"$"#,
+                     options: .regularExpression) != nil
+    else { return nil }
+
+    if text.hasPrefix("http://") || text.hasPrefix("https://") || text.hasPrefix("file://") {
+        return URL(string: text)
+    }
+    guard text.hasPrefix("/") || text.hasPrefix("~") else { return nil }
+    let path = (text as NSString).expandingTildeInPath
+    guard FileManager.default.fileExists(atPath: path) else { return nil }
+    return URL(fileURLWithPath: path)
 }
 
 @MainActor

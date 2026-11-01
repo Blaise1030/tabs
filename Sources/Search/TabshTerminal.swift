@@ -4,14 +4,37 @@ import SwiftUI
 
 /// SwiftTerm's terminal, without the system scroller it puts down its edge:
 /// the column is one surface, and a permanent thick bar was the loudest thing
-/// in it. Scrolling still works; the knob is simply not drawn.
+/// in it. Scrolling still works; the knob is simply not drawn. Files dropped
+/// on it are pasted as shell-quoted paths (see TabshDrop), the same shape
+/// the web app's drop.ts feeds a TUI.
 final class ChromeTerminalView: TerminalView {
+    var onDropFiles: (([URL]) -> Void)?
+
     override func layout() {
         super.layout()
         for sub in subviews
         where sub is NSScroller || sub.identifier?.rawValue == "SwiftTermOverlayScrollerIndicator" {
             sub.isHidden = true
         }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        TabshDrop.urls(from: sender.draggingPasteboard).isEmpty ? [] : .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        TabshDrop.urls(from: sender.draggingPasteboard).isEmpty ? [] : .copy
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        !TabshDrop.urls(from: sender.draggingPasteboard).isEmpty
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = TabshDrop.urls(from: sender.draggingPasteboard)
+        guard !urls.isEmpty else { return false }
+        onDropFiles?(urls)
+        return true
     }
 }
 
@@ -62,6 +85,17 @@ final class TabshTerminal: NSObject, ObservableObject, TerminalViewDelegate {
     private var stopped = false
     private var retries = 0
     private var reconnect: DispatchWorkItem?
+    /// The shell output this screen holds: the daemon's epoch for the shell,
+    /// and how many bytes of it have been fed. A reconnect asks for only what
+    /// came after, as the web app's terminal does, so a screen that is
+    /// already full is not filled with the same scrollback twice.
+    private var epoch: String?
+    private var at = 0
+    /// The next binary frame is the replay that follows the daemon's stream
+    /// frame, and whether it holds only what this screen missed (`resumed`)
+    /// rather than the whole scrollback, which replaces what is on screen.
+    private var replaying = false
+    private var resumed = false
 
     init(sessionID: String) {
         self.sessionID = sessionID
@@ -72,7 +106,26 @@ final class TabshTerminal: NSObject, ObservableObject, TerminalViewDelegate {
         view.nativeBackgroundColor = NSColor(srgbRed: 0.047, green: 0.047, blue: 0.047, alpha: 1)
         view.nativeForegroundColor = NSColor(srgbRed: 0.90, green: 0.90, blue: 0.91, alpha: 1)
         view.caretColor = NSColor(srgbRed: 0.55, green: 0.78, blue: 0.98, alpha: 1)
+        if let chrome = view as? ChromeTerminalView {
+            chrome.registerForDraggedTypes([
+                .fileURL, .png, .tiff,
+                NSPasteboard.PasteboardType("public.jpeg"),
+                NSPasteboard.PasteboardType("public.png"),
+                NSPasteboard.PasteboardType("public.tiff"),
+            ])
+            chrome.onDropFiles = { [weak self] urls in
+                self?.pasteDropped(urls)
+            }
+        }
         connect()
+    }
+
+    /// A drop on the terminal: local paths, shell-quoted, as a paste so a
+    /// TUI like Claude Code picks them up the way the web app's drop does.
+    private func pasteDropped(_ urls: [URL]) {
+        let text = TabshDrop.pastePaths(urls)
+        guard !text.isEmpty else { return }
+        view.pasteText(text)
     }
 
     /// The chrome's colours, so the terminal is part of the same window
@@ -100,7 +153,13 @@ final class TabshTerminal: NSObject, ObservableObject, TerminalViewDelegate {
     }
 
     private func connect() {
-        guard !stopped, let url = Tabsh.socketURL(for: sessionID) else { return }
+        // A shell the daemon replaced (or a daemon that restarted) has a new
+        // epoch: the daemon can't honour the old resume and sends the whole
+        // scrollback, which the first binary frame tells us to replace.
+        let seen = epoch.map { (epoch: $0, at: at) }
+        guard !stopped,
+              let url = Tabsh.socketURL(for: sessionID, resume: seen)
+        else { return }
         var request = URLRequest(url: url)
         // The daemon takes a WebSocket only when it can see where it came
         // from; this is the browser's own copy of its page.
@@ -116,9 +175,12 @@ final class TabshTerminal: NSObject, ObservableObject, TerminalViewDelegate {
 
     private func receive() {
         guard let socket else { return }
-        socket.receive { [weak self] result in
+        socket.receive { [weak self, weak socket] result in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                // A late message from a socket that has already been
+                // replaced must not feed the new screen or open another
+                // reconnect.
+                guard let self, let socket, self.socket === socket else { return }
                 switch result {
                 case let .success(message):
                     self.handle(message)
@@ -133,16 +195,35 @@ final class TabshTerminal: NSObject, ObservableObject, TerminalViewDelegate {
     private func handle(_ message: URLSessionWebSocketTask.Message) {
         switch message {
         case let .data(data):
+            // The first frame after the stream frame is the replay: its bytes
+            // are already counted by `at`. Live output came after it.
+            let replay = replaying
+            replaying = false
+            if replay, !resumed { view.resetToInitialState() }
             if !data.isEmpty { view.feed(byteArray: [UInt8](data)[...]) }
+            if !replay { at += data.count }
             retries = 0
         case let .string(text):
-            if text.contains("\"exit\"") {
+            guard let data = text.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return }
+            if let stream = object["stream"] as? [String: Any],
+               let epoch = stream["epoch"] as? String,
+               let at = stream["at"] as? Int {
+                // Says whether the replay that follows is the whole scrollback
+                // (a fresh shell, or a resume the daemon couldn't honour) or
+                // only the bytes this screen missed.
+                self.epoch = epoch
+                self.at = at
+                replaying = true
+                resumed = stream["resumed"] as? Bool == true
+            } else if object["exit"] as? Bool == true {
                 exited = true
-            } else if text.contains("\"restart\"") {
+            } else if object["restart"] as? Bool == true {
                 // The daemon replaced the shell: attach to the new one.
                 retry(now: true)
             }
-            // {"stream":…} and {"bell":…} need nothing here.
+            // {"bell":…} needs nothing here.
         @unknown default:
             break
         }
@@ -224,11 +305,17 @@ final class TabshTerminal: NSObject, ObservableObject, TerminalViewDelegate {
 struct TabshTerminalView: NSViewRepresentable {
     let sessionID: String
     @ObservedObject var browser: Browser
+    /// Whether the keys belong to this pane: its tab is the page on show, and
+    /// nothing the person is typing into is over it (see TabshTerminalPane).
+    /// Asked each time a claim is about to be made, not read once — a pane on
+    /// its way out is given no last update to say so in.
+    var claimsKeys: () -> Bool
     @ObservedObject private var terminalSettings = TerminalPreferences.shared
 
-    init(sessionID: String, browser: Browser) {
+    init(sessionID: String, browser: Browser, claimsKeys: @escaping () -> Bool = { true }) {
         self.sessionID = sessionID
         _browser = ObservedObject(wrappedValue: browser)
+        self.claimsKeys = claimsKeys
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -239,19 +326,10 @@ struct TabshTerminalView: NSViewRepresentable {
         // Square corners: the tab's ground runs out to the edge of the shell,
         // and the padding around it is the only thing between the text and it.
         host.layer?.masksToBounds = true
+        host.claimsKeys = claimsKeys
         let session = TabshTerminals.shared.terminal(for: sessionID)
-        let terminal = session.view
-        host.terminal = terminal
         session.apply(dark: isDark(context), tint: browser.chromeTheme?.color)
-        terminal.removeFromSuperview()
-        terminal.translatesAutoresizingMaskIntoConstraints = false
-        host.addSubview(terminal)
-        NSLayoutConstraint.activate([
-            terminal.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-            terminal.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-            terminal.topAnchor.constraint(equalTo: host.topAnchor),
-            terminal.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-        ])
+        host.adopt(session.view)
         return host
     }
 
@@ -259,14 +337,31 @@ struct TabshTerminalView: NSViewRepresentable {
         guard let host = view as? TerminalHost else { return }
         // The window can follow the page it is showing (see ChromeTheme): the
         // terminal takes the same ground and contrast.
-        TabshTerminals.shared.terminal(for: sessionID)
-            .apply(dark: isDark(context), tint: browser.chromeTheme?.color)
+        let terminal = TabshTerminals.shared.terminal(for: sessionID)
+        terminal.apply(dark: isDark(context), tint: browser.chromeTheme?.color)
+        // Back from a window it was taken out of (see TerminalHost.viewWillMove).
+        host.adopt(terminal.view)
+        host.claimsKeys = claimsKeys
         // The stage reuses the host as tabs come and go; the tab that has
-        // just come back is the one the keys should reach.
-        if let terminal = host.terminal, let window = host.window,
-           window.firstResponder !== terminal {
-            DispatchQueue.main.async { window.makeFirstResponder(terminal) }
+        // just come back is the one the keys should reach. Only while this
+        // pane is the page on show: the claim is made a turn of the run loop
+        // later, and one made as a tab was being left reached the window
+        // after the new tab's field had asked for the keys, and took them —
+        // ⌘T left the caret in no field, with what was typed going to the
+        // shell behind. Asked again when the claim lands, so a pane that has
+        // gone in the meantime keeps its hands off.
+        if claimsKeys(), let window = host.window, window.firstResponder !== terminal.view {
+            DispatchQueue.main.async {
+                guard host.claimsKeys(), terminal.view.window === window else { return }
+                window.makeFirstResponder(terminal.view)
+            }
         }
+    }
+
+    /// The pane is gone for good: the shell leaves the window with it, and
+    /// TabshTerminals keeps the session itself for the tab's return.
+    static func dismantleNSView(_ host: NSView, coordinator: ()) {
+        (host as? TerminalHost)?.terminal?.removeFromSuperview()
     }
 
     /// Dark when the page the window follows is dark, else the window's own
@@ -279,21 +374,73 @@ struct TabshTerminalView: NSViewRepresentable {
 
 /// The terminal's place in the stage. It takes the keys as soon as it is in a
 /// window — a terminal you have to click into before it hears you is a
-/// terminal that looks broken — and again on any click, as a page does.
+/// terminal that looks broken — and again on any click, as a page does. Drops
+/// that land on the host (the padding around the shell) go to the same
+/// handler the terminal view uses.
 private final class TerminalHost: NSView {
     weak var terminal: NSView?
+    /// Whether the keys belong here — asked afresh at each claim, see
+    /// TabshTerminalView.claimsKeys.
+    var claimsKeys: () -> Bool = { true }
+
+    /// The shell in this pane: reparented here, or taken back if the pane was
+    /// away from the window in between (see viewWillMove).
+    func adopt(_ terminal: NSView) {
+        self.terminal = terminal
+        guard terminal.superview !== self else { return }
+        terminal.removeFromSuperview()
+        terminal.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(terminal)
+        NSLayoutConstraint.activate([
+            terminal.leadingAnchor.constraint(equalTo: leadingAnchor),
+            terminal.trailingAnchor.constraint(equalTo: trailingAnchor),
+            terminal.topAnchor.constraint(equalTo: topAnchor),
+            terminal.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard let terminal, let window else { return }
-        DispatchQueue.main.async { [weak window, weak terminal] in
-            guard let window, let terminal, terminal.window === window else { return }
+        registerForDraggedTypes([
+            .fileURL, .png, .tiff,
+            NSPasteboard.PasteboardType("public.jpeg"),
+            NSPasteboard.PasteboardType("public.png"),
+        ])
+        guard claimsKeys(), let terminal, let window else { return }
+        DispatchQueue.main.async { [weak self, weak window, weak terminal] in
+            guard let self, self.claimsKeys(), let window, let terminal,
+                  terminal.window === window else { return }
             window.makeFirstResponder(terminal)
         }
+    }
+
+    /// The pane has left the window, and the shell goes with it. The session
+    /// is kept by TabshTerminals, so the tab comes back to the terminal it
+    /// left — but a view kept in a window it is no longer part of would draw
+    /// under whatever the stage shows next, and take what is typed there.
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        if newWindow == nil { terminal?.removeFromSuperview() }
     }
 
     override func mouseDown(with event: NSEvent) {
         if let terminal, let window { window.makeFirstResponder(terminal) }
         super.mouseDown(with: event)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        (terminal as? ChromeTerminalView)?.draggingEntered(sender) ?? []
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        (terminal as? ChromeTerminalView)?.draggingUpdated(sender) ?? []
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        (terminal as? ChromeTerminalView)?.prepareForDragOperation(sender) ?? false
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        (terminal as? ChromeTerminalView)?.performDragOperation(sender) ?? false
     }
 }

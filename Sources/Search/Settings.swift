@@ -341,6 +341,13 @@ struct SettingsPanel: View {
             ExtensionsPage(browser: browser)
         case .agents:
             AgentProvidersSettings()
+            // Its own group: the providers list above is drawn by hand, and
+            // these rows come from SettingsIndex like every other section's.
+            if let group = SettingsIndex.group("agentnotify") {
+                GroupBlock(title: group.title, icon: group.icon) {
+                    Card { rows(SettingsIndex.items(in: group.id).filter(shown), searched: false) }
+                }
+            }
         case .ai:
             if AI.shipped { AISettings(browser: browser, prefs: prefs) }
         default:
@@ -456,6 +463,14 @@ struct SettingsPanel: View {
 
     // MARK: - controls
 
+    /// A row whose page has no control case for it: a blank row on the right
+    /// is a mistake in this file, not a design (see Settings › Agents ›
+    /// Notifications), so a development run says so instead of drawing space.
+    private func unhandled(_ id: String) -> some View {
+        assertionFailure("no control for \(id)")
+        return EmptyView()
+    }
+
     @ViewBuilder
     private func control(_ item: SettingsItem) -> some View {
         switch item.page {
@@ -465,9 +480,11 @@ struct SettingsPanel: View {
         case .browsing: browsingControl(item.id)
         case .spaces: spacesControl(item.id)
         case .passwords, .privacy: keptControl(item.id)
+        case .agents: agentsControl(item.id)
         case .keyboard, .about: otherControl(item.id)
         case .terminal: terminalControl(item.id)
-        default: EmptyView()
+        // Drawn by hand above (AISettings, ExtensionsPage), not row by row.
+        case .ai, .extensions: EmptyView()
         }
     }
 
@@ -496,7 +513,7 @@ struct SettingsPanel: View {
         case "downloads.folder": Pill("Change…") { chooseFolder() }
         case "downloads.ask": Switch(on: $prefs.asksWhereToSave)
         case "downloads.button": Switch(on: $prefs.alwaysShowsDownloads)
-        default: EmptyView()
+        default: unhandled(id)
         }
     }
 
@@ -534,7 +551,7 @@ struct SettingsPanel: View {
         case "bookmarks.bar": Switch(on: $prefs.bookmarksBar)
         case "motion.light": Switch(on: $prefs.lightMotion)
         case "note.split": Always()
-        default: EmptyView()
+        default: unhandled(id)
         }
     }
 
@@ -578,7 +595,7 @@ struct SettingsPanel: View {
                 set: { on in withAnimation(Motion.glide) { prefs.showsAddress = on } }
             ))
         case "note.groups", "note.awake": Always()
-        default: EmptyView()
+        default: unhandled(id)
         }
     }
 
@@ -621,7 +638,7 @@ struct SettingsPanel: View {
         case "pages.120": Segmented(options: FastPages.allCases.map { ($0, $0.title) }, selection: $prefs.fastPages)
         case "autocorrect": Switch(on: $prefs.autocorrect)
         case "note.panel", "note.translate", "note.sitesearch", "note.links", "note.flick": Always()
-        default: EmptyView()
+        default: unhandled(id)
         }
     }
 
@@ -653,7 +670,7 @@ struct SettingsPanel: View {
         case "commandbar": Switch(on: $prefs.commandBar)
         case "start.fresh": Switch(on: $prefs.startsFresh)
         case "note.sharedpins", "note.pinback": Always()
-        default: EmptyView()
+        default: unhandled(id)
         }
     }
 
@@ -674,7 +691,32 @@ struct SettingsPanel: View {
         case "clear.history": Pill("Clear") { browser.clearHistory() }
         case "clear.cookies": Pill("Sign out of everything") { browser.clearSites() }
         case "clear.cache": Pill("Clear") { browser.clearCache() }
-        default: EmptyView()
+        default: unhandled(id)
+        }
+    }
+
+    /// Settings › Agents › Notifications (see AgentNotify): the two statuses
+    /// that are news, the quiet while the tab is in front, and the sound.
+    @ViewBuilder
+    private func agentsControl(_ id: String) -> some View {
+        switch id {
+        case "agents.notify.needs":
+            Switch(on: Binding(get: { prefs.agentNotifyNeeds },
+                               set: { on in
+                                   prefs.agentNotifyNeeds = on
+                                   // The prompt comes while the switch is in
+                                   // sight, not mid-turn (see AgentNotify).
+                                   if on { AgentNotify.ask() }
+                               }))
+        case "agents.notify.done":
+            Switch(on: Binding(get: { prefs.agentNotifyDone },
+                               set: { on in
+                                   prefs.agentNotifyDone = on
+                                   if on { AgentNotify.ask() }
+                               }))
+        case "agents.notify.background": Switch(on: $prefs.agentNotifyBackground)
+        case "agents.notify.sound": Switch(on: $prefs.agentNotifySound)
+        default: unhandled(id)
         }
     }
 
@@ -749,7 +791,7 @@ struct SettingsPanel: View {
         case "about.feedback": Pill("Send Feedback") { Links.writeFeedback() }
         case "about.notes": Pill("What's New…") { browser.lead(to: InternalPage(.notes)) }
         case "bench": Switch(on: $prefs.bench)
-        default: EmptyView()
+        default: unhandled(id)
         }
     }
 

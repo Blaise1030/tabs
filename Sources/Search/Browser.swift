@@ -5627,8 +5627,32 @@ final class Browser: NSObject, ObservableObject {
             .store(in: &bag)
     }
 
-    /// Put the cursor back in the field, from wherever asked.
-    func askFocus() { focusRequest += 1 }
+    /// Put the cursor back in the field, from wherever asked — and again, a
+    /// few times over half a second, if it went nowhere.
+    ///
+    /// SwiftUI can take the field's view out of the window and put it back
+    /// while it lays a pane out, the address field's included (see Omnibox),
+    /// and the keys it held go with it: with Split View on, ⌘T from an agent
+    /// tab asked for the field, put the caret in it, and then the pane's
+    /// layout threw the view away — leaving nothing focused at all, so what
+    /// was typed next went nowhere. Asked again once the layout has settled,
+    /// and only while nothing at all has the keys: a page, a panel or a shell
+    /// that took them is never pulled from.
+    func askFocus() {
+        focusRequest += 1
+        reaskFocus(after: 0.12, tries: 4)
+    }
+
+    private func reaskFocus(after delay: Double, tries: Int) {
+        guard tries > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.fieldShowing, self.editingTab == nil,
+                  let window = self.window else { return }
+            guard window.firstResponder === window else { return }
+            self.focusRequest += 1
+            self.reaskFocus(after: delay, tries: tries - 1)
+        }
+    }
 
     /// A key typed between ⌘T and the field taking the keys, kept for it.
     ///
@@ -7376,12 +7400,14 @@ final class PrintSheet: NSObject {
 extension Browser {
     /// The tab in this window's row showing that kind of page, if any.
     /// New Terminal, from the + or File › New Terminal Tab: a card on the
-    /// daemon, and its shell in a tab of its own.
-    func newTerminal() {
+    /// daemon, and its shell in a tab of its own. Asked from a group's
+    /// heading, that tab joins the group.
+    func newTerminal(in group: UUID? = nil) {
         Task { @MainActor in
             do {
                 let session = try await Tabsh.createTerminal()
-                show(InternalPage(.tabsh, session.id))
+                let tab = show(InternalPage(.tabsh, session.id))
+                if let group { move(tab, toGroup: group) }
             } catch {
                 announce("tabsh: \(error.localizedDescription)")
             }
@@ -7389,12 +7415,14 @@ extension Browser {
     }
 
     /// New Agent, from the +, File › New Agent Tab, or its shortcut: a UI
-    /// card on the daemon and its chat in a tab of its own.
-    func newAgent() {
+    /// card on the daemon and its chat in a tab of its own. Asked from a
+    /// group's heading, that tab joins the group.
+    func newAgent(in group: UUID? = nil) {
         Task { @MainActor in
             do {
                 let session = try await Tabsh.createAgent()
-                show(InternalPage(.agent, session.id))
+                let tab = show(InternalPage(.agent, session.id))
+                if let group { move(tab, toGroup: group) }
             } catch {
                 announce("tabsh: \(error.localizedDescription)")
             }

@@ -86,6 +86,7 @@ enum SettingsIndex {
         .init(id: "apple", page: .passwords, title: "Apple Passwords", icon: "lock.rectangle.stack"),
 
         .init(id: "agents", page: .agents, title: "Agents", icon: "point.3.connected.trianglepath.dotted"),
+        .init(id: "agentnotify", page: .agents, title: "Notifications", icon: "bell"),
 
         .init(id: "blocking", page: .privacy, title: "Blocking", icon: "shield"),
         .init(id: "permissions", page: .privacy, title: "Site permissions", icon: "checkmark.shield"),
@@ -311,6 +312,23 @@ enum SettingsIndex {
               words: ["claude", "codex", "cursor", "gemini", "opencode", "acp", "startup", "resume",
                       "command", "provider", "agent"],
               kind: .note, findOnly: true),
+        .init(id: "agents.notify.needs", group: "agentnotify", icon: "bell",
+              title: "Tell me when an agent needs input",
+              detail: "A Mac notification when a card moves to Needs input",
+              more: "macOS asks once whether Tabs may notify. Focus and Do Not Disturb then apply as they do to any app. A hook's move or the agent's own counts; a card you drag yourself does not.",
+              keys: ["agents.notify.needs"], words: ["notifications", "alerts", "needs input", "attention", "bell"]),
+        .init(id: "agents.notify.done", group: "agentnotify", icon: "bell.badge",
+              title: "Tell me when an agent finishes",
+              detail: "A Mac notification when a card moves to Completed",
+              keys: ["agents.notify.done"], words: ["notifications", "alerts", "done", "finished"]),
+        .init(id: "agents.notify.background", group: "agentnotify", icon: "macwindow",
+              title: "Only when the tab isn't in front",
+              detail: "No banner for the card you are already looking at",
+              keys: ["agents.notify.background"], words: ["background", "quiet", "focused"]),
+        .init(id: "agents.notify.sound", group: "agentnotify", icon: "speaker.wave.2",
+              title: "Play a sound",
+              detail: "The Mac's notification sound, with the banner",
+              keys: ["agents.notify.sound"], words: ["sound", "silent", "audio"]),
 
         // Privacy
         .init(id: "shield", group: "blocking", icon: "shield.lefthalf.filled",
@@ -465,6 +483,8 @@ enum SettingsIndex {
         case "sidebar.roomy": return prefs.sidebar && !prefs.sideIcons
         case "sidebar.hides", "layout.cards", "pins.list": return prefs.sidebar
         case "toolbar.left": return !prefs.sidebar
+        case "agents.notify.background", "agents.notify.sound":
+            return prefs.agentNotifyNeeds || prefs.agentNotifyDone
         default: return true
         }
     }

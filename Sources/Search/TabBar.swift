@@ -1258,6 +1258,10 @@ struct TabMenu: View {
     @ObservedObject var tab: Tab
     let close: () -> Void
 
+    /// The cards, so an agent's status can be changed from here as it is
+    /// from the board's row and the session header.
+    @ObservedObject private var sessions = TabshSessions.shared
+
     var body: some View {
         singleMenu
         if browser.selectedTabIDs.contains(tab.id) && browser.visibleSelectedTabCount > 1 {
@@ -1418,6 +1422,22 @@ struct TabMenu: View {
         }
         .disabled(browser.awake(because: tab) != nil)
         Divider()
+        // A terminal or agent tab: delete kills the card on the daemon too.
+        // Closing the tab alone leaves the shell running (tabsh's promise).
+        if let sessionID = tab.tabshSessionID {
+            // An agent's card has a status the hooks move; a plain terminal
+            // is only a tab on the daemon, with none to change.
+            if let info = sessions.info(for: sessionID), info.hasAgent {
+                Menu("Status") {
+                    TabshStatusMenuItems(current: info.state) { status in
+                        sessions.move(sessionID, to: status)
+                    }
+                }
+            }
+            Button("Delete Session", role: .destructive) {
+                sessions.delete(sessionID)
+            }
+        }
         // Right-clicked among tabs picked in the column: all of them, as ⌘W
         // closes them.
         let picked = browser.selectedTabIDs.contains(tab.id) ? browser.visibleSelectedTabCount : 1

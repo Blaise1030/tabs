@@ -26,18 +26,28 @@ enum TabshError: LocalizedError {
 enum Tabsh {
     nonisolated static var base: URL { TabshDaemon.base }
 
-    /// One row of `/api/sessions`: enough to name a tab and open it.
+    /// One row of `/api/sessions`: enough to name a tab and open it, and to
+    /// tell which agent a live chat card runs (`acpCommand`).
     struct Session: Decodable {
         let id: String
         var name: String?
         var status: String?
         var folder: String?
+        var acpCommand: String?
 
-        init(id: String, name: String? = nil, status: String? = nil, folder: String? = nil) {
+        enum CodingKeys: String, CodingKey {
+            case id, name, status
+            case folder = "cwd"
+            case acpCommand = "acp_command"
+        }
+
+        init(id: String, name: String? = nil, status: String? = nil, folder: String? = nil,
+             acpCommand: String? = nil) {
             self.id = id
             self.name = name
             self.status = status
             self.folder = folder
+            self.acpCommand = acpCommand
         }
     }
 
@@ -160,8 +170,8 @@ enum Tabsh {
 
     /// The model or mode select an ACP agent advertises. Empty until the
     /// agent is live; the chat panel polls for it once the handshake is done.
-    struct ChatSelect: Decodable {
-        struct Choice: Decodable, Identifiable {
+    struct ChatSelect: Codable {
+        struct Choice: Codable, Identifiable {
             let id: String
             let name: String
             let description: String?
@@ -169,6 +179,11 @@ enum Tabsh {
 
         var current: String?
         var options: [Choice]
+
+        init(current: String? = nil, options: [Choice] = []) {
+            self.current = current
+            self.options = options
+        }
     }
 
     // The chat routes a UI card answers on. Their chunks are rendered by
@@ -242,6 +257,17 @@ enum Tabsh {
     static func approveChat(_ session: String, requestID: String, allow: Bool) async throws {
         _ = try await request("POST", "/api/sessions/\(session)/chat/approve",
                               body: ["requestId": requestID, "allow": allow])
+    }
+
+    /// Answers the question an ACP agent is blocked on: `accept` carries the
+    /// form's values, `decline` and `cancel` carry none.
+    static func answerChat(_ session: String,
+                           requestID: String,
+                           action: String,
+                           content: [String: Any]? = nil) async throws {
+        var body: [String: Any] = ["requestId": requestID, "action": action]
+        if let content { body["content"] = content }
+        _ = try await request("POST", "/api/sessions/\(session)/chat/answer", body: body)
     }
 
     /// The SSE request a chat panel reads: same bearer token as every other
@@ -357,8 +383,95 @@ enum Tabsh {
         return session
     }
 
+    /// A chat card that starts now, with the model and agent mode chosen on
+    /// the New Agent card applied *before* the first prompt. The board only
+    /// launches a card it was moved to In progress by the user — and it
+    /// launches it with the agent's default model. So the card is moved as a
+    /// hook would move it (no launch), the chat is brought up here, its
+    /// advertised selects are set, and the prompt goes in as the first
+    /// message, which is what a handshake with no prompt is for.
+    static func createChat(cwd: String, name: String, prompt: String, provider: Provider,
+                           model: String?, mode: String?) async throws -> Session {
+        var body: [String: Any] = [
+            "cwd": cwd,
+            "name": name,
+            "mode": "ui",
+            "command": provider.command,
+            "resume": provider.resume ?? "",
+        ]
+        if let acp = provider.acp, !acp.isEmpty {
+            body["acp_command"] = acp
+        }
+        let data = try await request("POST", "/api/sessions", body: body)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = object["id"] as? String else { throw TabshError.malformed }
+        _ = try await request("PATCH", "/api/sessions/\(id)/status",
+                              body: ["status": "in_progress", "source": "hook"])
+        try? await startChat(id)
+
+        if let model {
+            // The agent advertises its models once `session/new` answers;
+            // until then there is nothing to set.
+            for _ in 0..<40 {
+                if let select = try? await chatModels(id),
+                   select.options.contains(where: { $0.id == model }) {
+                    _ = try? await setChatModel(id, id: model)
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+        if let mode {
+            for _ in 0..<10 {
+                if let select = try? await chatModes(id),
+                   select.options.contains(where: { $0.id == mode }) {
+                    _ = try? await setChatMode(id, id: mode)
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+
+        try await sendChatMessage(id, text: prompt)
+        return Session(id: id,
+                       name: object["name"] as? String ?? name,
+                       status: "in_progress",
+                       folder: cwd)
+    }
+
+    /// A throwaway card for asking an agent what it can run. It is born in
+    /// Backlog and moved to In progress by a hook — which does not launch it
+    /// — so `chat/start` may bring its ACP agent up here and its model list
+    /// can be read before the card is deleted.
+    static func probeSession(cwd: String, provider: Provider) async throws -> String {
+        var body: [String: Any] = [
+            "cwd": cwd,
+            "name": "Checking models",
+            "mode": "ui",
+            "command": provider.command,
+            "resume": provider.resume ?? "",
+        ]
+        if let acp = provider.acp, !acp.isEmpty {
+            body["acp_command"] = acp
+        }
+        let data = try await request("POST", "/api/sessions", body: body)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = object["id"] as? String else { throw TabshError.malformed }
+        _ = try await request("PATCH", "/api/sessions/\(id)/status",
+                              body: ["status": "in_progress", "source": "hook"])
+        return id
+    }
+
+    /// Kill the shell (or chat agent) and remove the card, as the web board's
+    /// Delete session does. A 204 with an empty body is success.
+    static func deleteSession(_ id: String) async throws {
+        _ = try await request("DELETE", "/api/sessions/\(id)")
+    }
+
     /// The tree the explorer shows: the tab's project root (its git root,
     /// else its folder) and every path under it, directories ending in `/`.
+    /// When `truncated`, `foldersOnly` means a reduced listing — folders plus
+    /// first-level files — rather than the whole tree.
     struct Tree: Decodable {
         let root: String
         let paths: [String]
@@ -369,6 +482,19 @@ enum Tabsh {
     static func tree(session: String) async throws -> Tree {
         let data = try await request("GET", "/api/files/tree?session=\(session)")
         return try JSONDecoder().decode(Tree.self, from: data)
+    }
+
+    /// The folders that complete a typed path, for New Agent's folder search,
+    /// and the home folder so the picker can show and expand `~`.
+    struct Folders: Decodable {
+        let home: String
+        let folders: [String]
+    }
+
+    static func folders(path: String) async throws -> Folders {
+        let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? path
+        let data = try await request("GET", "/api/files/folders?path=\(encoded)")
+        return try JSONDecoder().decode(Folders.self, from: data)
     }
 
     /// The explorer's live socket: the daemon watches the session's project
@@ -403,22 +529,42 @@ enum Tabsh {
             return Session(id: id,
                            name: object["name"] as? String,
                            status: object["status"] as? String,
-                           folder: object["folder"] as? String)
+                           folder: object["cwd"] as? String,
+                           acpCommand: object["acp_command"] as? String)
         }
     }
 
     /// The socket a terminal attaches through, with the token the browser's
     /// pages would use. Its Origin is the daemon's own page origin, which is
-    /// what the daemon accepts from a local client.
-    nonisolated static func socketURL(for session: String) -> URL? {
+    /// what the daemon accepts from a local client. `resume` names the epoch
+    /// and byte count the screen already holds: the daemon then sends only
+    /// what came after, rather than the whole scrollback again.
+    nonisolated static func socketURL(
+        for session: String,
+        resume: (epoch: String, at: Int)? = nil
+    ) -> URL? {
         guard let token = TabshDaemon.token() else { return nil }
+        return socketURL(session: session, token: token, resume: resume)
+    }
+
+    /// [`socketURL(for:resume:)`] with the token passed in, so the URL can be
+    /// checked without the daemon's token file.
+    nonisolated static func socketURL(
+        session: String,
+        token: String,
+        resume: (epoch: String, at: Int)? = nil
+    ) -> URL? {
         var parts = URLComponents(url: base, resolvingAgainstBaseURL: false)
         parts?.scheme = "ws"
         parts?.path = "/ws"
-        parts?.queryItems = [
+        var items = [
             URLQueryItem(name: "id", value: session),
             URLQueryItem(name: "token", value: token),
         ]
+        if let resume {
+            items.append(URLQueryItem(name: "resume", value: "\(resume.epoch):\(resume.at)"))
+        }
+        parts?.queryItems = items
         return parts?.url
     }
 

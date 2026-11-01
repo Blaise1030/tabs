@@ -16,8 +16,16 @@ import SwiftUI
 // follow a `cd` in the shell, or whatever folder the agent has moved to.
 struct TabshTerminalPane: View {
     let sessionID: String
+    /// The tab this pane is drawn in. What it is for is the keys: a pane that
+    /// is not the page on show must not ask for them — see claimsKeys.
+    let tab: Tab
     @ObservedObject var browser: Browser
-    @State private var showingExplorer = true
+    @ObservedObject private var sessions = TabshSessions.shared
+    @ObservedObject private var terminalSettings = TerminalPreferences.shared
+    /// An agent TUI keeps the files column shut until asked for, same as the
+    /// UI agent pane (and shares that choice). A plain shell still opens it.
+    @AppStorage("tabsh.agent.explorer") private var agentShowingExplorer = false
+    @State private var shellShowingExplorer = true
     @Environment(\.colorScheme) private var scheme
 
     private var dark: Bool { browser.chromeTheme?.dark ?? (scheme == .dark) }
@@ -25,27 +33,79 @@ struct TabshTerminalPane: View {
     /// The ground under both halves, so the explorer is part of the
     /// terminal rather than a panel of its own (see TabshTerminalTheme).
     private var ground: Color {
-        if let tint { return Color(nsColor: tint) }
-        return Color(nsColor: TabshTerminalTheme.background(dark: dark))
+        Color(nsColor: terminalSettings.colours(dark: dark, tint: tint).background)
+    }
+    /// Ink in the header follows the terminal's ground, not the window —
+    /// a dark theme in a light window would otherwise paint dark text on
+    /// dark ground (Palette resolves against the window's appearance).
+    private var terminalScheme: ColorScheme {
+        let bg = terminalSettings.colours(dark: dark, tint: tint).background
+        guard let rgb = bg.usingColorSpace(.sRGB) else { return dark ? .dark : .light }
+        let lum = 0.2126 * rgb.redComponent + 0.7152 * rgb.greenComponent + 0.0722 * rgb.blueComponent
+        return lum > 0.5 ? .light : .dark
+    }
+
+    private var session: Tabsh.SessionInfo? { sessions.info(for: sessionID) }
+    /// An agent in a terminal still wears the chat's header — name,
+    /// move/delete — so a TUI card and a UI card read the same way. Its status
+    /// select is the chat's alone, so the two panes don't both say the state.
+    /// A plain shell has none of that, and only floats the explorer button
+    /// when shut.
+    private var hasAgent: Bool { session?.hasAgent == true }
+    /// Whether the keys belong to the shell: this pane's tab is the page on
+    /// show, and the address field or the find bar isn't over it waiting to
+    /// be typed into. A shell that claimed them anyway took them from the
+    /// field of the tab opening behind it — ⌘T from an agent tab left the new
+    /// tab's caret nowhere, with what was typed going to the shell instead.
+    private func claimsKeys() -> Bool {
+        browser.activeID == tab.id && !browser.editing && !browser.finding
+    }
+
+    private var showingExplorer: Binding<Bool> {
+        Binding(
+            get: { hasAgent ? agentShowingExplorer : shellShowingExplorer },
+            set: { if hasAgent { agentShowingExplorer = $0 } else { shellShowingExplorer = $0 } }
+        )
     }
 
     var body: some View {
         TabshProjectPane(sessionID: sessionID,
                          browser: browser,
                          ground: ground,
-                         showingExplorer: $showingExplorer) {
-            TabshTerminalView(sessionID: sessionID, browser: browser)
-                // Air around the shell: text that touches the tab's edges
-                // reads as clipped rather than as a terminal. No rounding on
-                // the shell itself (see TabshTerminalView): the padding is
-                // the only frame it needs.
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .overlay(alignment: .topTrailing) {
-                    if !showingExplorer {
-                        ExplorerShowButton(ground: ground) { showingExplorer = true }
+                         showingExplorer: showingExplorer) {
+            VStack(spacing: 0) {
+                if hasAgent {
+                    TabshSessionHeader(
+                        sessionID: sessionID,
+                        title: session?.label ?? "Agent",
+                        showingExplorer: showingExplorer
+                    ) {
+                        EmptyView()
                     }
+                    // Same ground as the shell and explorer, so the header
+                    // is part of the TUI column rather than a chrome strip.
+                    .background(ground)
+                    .environment(\.colorScheme, terminalScheme)
                 }
+                TabshTerminalView(sessionID: sessionID, browser: browser,
+                                  claimsKeys: claimsKeys)
+                    // Air around the shell: text that touches the tab's edges
+                    // reads as clipped rather than as a terminal. No rounding
+                    // on the shell itself (see TabshTerminalView): the padding
+                    // is the only frame it needs.
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .overlay(alignment: .topTrailing) { floatingChrome }
+            }
+        }
+    }
+
+    /// A plain terminal has no header, so the explorer's button floats over
+    /// the shell when that column is shut. Agent shells put it in the header.
+    @ViewBuilder
+    private var floatingChrome: some View {
+        if !hasAgent, !shellShowingExplorer {
+            ExplorerShowButton(ground: ground) { shellShowingExplorer = true }
         }
     }
 }
@@ -230,13 +290,8 @@ private struct TabshExplorer: View {
                 .font(.system(size: 11))
                 .foregroundStyle(Palette.muted)
                 .padding(.top, 8)
-        } else if truncated && (!foldersOnly || paths.isEmpty) {
-            Text("Too many files here to list.")
-                .font(.system(size: 11))
-                .foregroundStyle(Palette.muted)
-                .padding(.top, 8)
         } else if paths.isEmpty {
-            Text("Nothing here.")
+            Text(truncated ? "Too many files here to list." : "Nothing here.")
                 .font(.system(size: 11))
                 .foregroundStyle(Palette.muted)
                 .padding(.top, 8)
@@ -261,6 +316,16 @@ private struct TabshExplorer: View {
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
+                    // A reduced listing still draws: folders (and top-level
+                    // files) rather than an empty column when the tree is huge.
+                    if truncated || foldersOnly {
+                        Text("Folders and top-level files — too many to list the whole tree.")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Palette.faint)
+                            .padding(.top, 4)
+                            .padding(.bottom, 2)
+                            .padding(.horizontal, 4)
+                    }
                     ForEach(tree) { node in
                         TreeRows(node: node, depth: 0, base: root,
                                  expanded: $expanded, hovered: $hovered, open: open)

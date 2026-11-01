@@ -81,7 +81,7 @@ final class BrowserDiscoveryTests: XCTestCase {
         XCTAssertTrue(denied.profiles.isEmpty)
         XCTAssertNotNil(denied.error)
         let message = Chromium.Unavailable(source: source, error: denied.error).message
-        XCTAssertTrue(message.contains("macOS hasn't allowed Search"))
+        XCTAssertTrue(message.contains("macOS hasn't allowed Tabs"))
         XCTAssertTrue(message.contains("for this session"))
 
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)

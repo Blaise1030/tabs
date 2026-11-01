@@ -43,7 +43,9 @@ struct GroupDropFrames: PreferenceKey {
     }
 }
 
-/// A quiet name above the tabs it contains, in either layout.
+/// A quiet name above the tabs it contains, in either layout. Clicking it
+/// folds the group; right-clicking it opens what can be added to the group
+/// — a tab, a terminal, an agent — and the group's own actions.
 struct GroupHeading: View {
     @Environment(\.greys) private var greys
     @Environment(\.tabShortcutNumbers) private var shortcutNumbers
@@ -210,6 +212,11 @@ private struct GroupHeadingShared: ViewModifier {
             }
             .onDrag { NSItemProvider(object: "search-group:\(group.id.uuidString)" as NSString) }
             .contextMenu {
+                // What can be added to the group, then its own actions.
+                Button("New Tab") { browser.newTab(in: group.id) }
+                Button("New Terminal") { browser.newTerminal(in: group.id) }
+                Button("New Agent…") { browser.newAgentComposer(in: group.id) }
+                Divider()
                 Button("Rename Group") { browser.editingGroupID = group.id }
                 Button(group.collapsed ? "Expand Group" : "Collapse Group") { browser.toggleTabGroup(group.id) }
                 // The whole group into another space, still a group there: Arc's
@@ -229,5 +236,24 @@ private struct GroupHeadingShared: ViewModifier {
                 Button("Ungroup Tabs") { browser.removeTabGroup(group.id) }
                 Button("Close Group") { browser.closeTabGroup(group.id) }
             }
+    }
+}
+
+// MARK: - What a group's menu adds
+
+extension Browser {
+    /// New Tab from a group's menu: the tab ⌘T makes, in the group it was
+    /// asked from rather than loose at the end of the row.
+    func newTab(in group: UUID) {
+        newTab()
+        guard let tab = active, tab.groupID != group else { return }
+        move(tab, toGroup: group)
+    }
+
+    /// New Agent… from a group's menu: the composer's tab joins the group,
+    /// and so does the card made from it (see AgentComposer).
+    func newAgentComposer(in group: UUID) {
+        let tab = show(InternalPage(.agentComposer))
+        move(tab, toGroup: group)
     }
 }

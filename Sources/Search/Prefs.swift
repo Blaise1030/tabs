@@ -151,6 +151,10 @@ final class Preferences: ObservableObject {
     var columnWidth: CGFloat { iconColumn ? Metrics.iconColumn : sideWidth }
     /// One tab's line in the column, and the size its title is set in.
     var sideRow: CGFloat { iconColumn ? Metrics.iconTile : roomyTabs ? 36 : 28 }
+    /// A session's line, in the column and in the Sessions panel: the card's
+    /// note sits under its title, so it takes a little more room than a web
+    /// tab's, and both lists draw it at this height.
+    var sessionRow: CGFloat { max(sideRow, 34) }
     var sideTitle: CGFloat { roomyTabs ? 14 : 12.5 }
     /// How wide the column is. Pulled by its edge, and remembered.
     @Published var sideWidth: CGFloat {
@@ -221,6 +225,24 @@ final class Preferences: ObservableObject {
     /// asks on a card, and only what you allow ever reaches the Mac.
     @Published var siteNotifications: Bool {
         didSet { store.set(siteNotifications, forKey: "notifications.ask") }
+    }
+    /// Settings › Agents › Notifications: a Mac notification when one of the
+    /// daemon's cards needs input, or finishes (see AgentNotify). On by
+    /// default, as a terminal's bell would be; the card already in front is
+    /// left alone.
+    @Published var agentNotifyNeeds: Bool {
+        didSet { store.set(agentNotifyNeeds, forKey: "agents.notify.needs") }
+    }
+    @Published var agentNotifyDone: Bool {
+        didSet { store.set(agentNotifyDone, forKey: "agents.notify.done") }
+    }
+    /// Quiet while the card's own tab is the one in front of a window you are
+    /// looking at: the answer is already on screen.
+    @Published var agentNotifyBackground: Bool {
+        didSet { store.set(agentNotifyBackground, forKey: "agents.notify.background") }
+    }
+    @Published var agentNotifySound: Bool {
+        didSet { store.set(agentNotifySound, forKey: "agents.notify.sound") }
     }
     @Published var lazyTabs: Bool {
         didSet { store.set(lazyTabs, forKey: "tabs.lazy") }
@@ -679,6 +701,10 @@ final class Preferences: ObservableObject {
         confirmsQuit = store.bool(forKey: Preferences.confirmQuitKey)
         engineSuggests = store.bool(forKey: "search.suggest")
         siteNotifications = store.object(forKey: "notifications.ask") as? Bool ?? true
+        agentNotifyNeeds = store.object(forKey: "agents.notify.needs") as? Bool ?? true
+        agentNotifyDone = store.object(forKey: "agents.notify.done") as? Bool ?? true
+        agentNotifyBackground = store.object(forKey: "agents.notify.background") as? Bool ?? true
+        agentNotifySound = store.object(forKey: "agents.notify.sound") as? Bool ?? true
         showsTabShortcuts = store.bool(forKey: "tabs.shortcuts")
         showsReading = store.object(forKey: "tabs.reading") as? Bool ?? true
         // On for everyone who never touched it (Drice, 24 Oct 2026, on

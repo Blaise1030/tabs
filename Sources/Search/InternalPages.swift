@@ -189,7 +189,7 @@ struct InternalPageView: View {
         case .editor:
             EditorPanel(path: page.detail ?? "")
         case .tabsh:
-            TabshTerminalPane(sessionID: page.detail ?? "", browser: browser)
+            TabshTerminalPane(sessionID: page.detail ?? "", tab: tab, browser: browser)
         case .agent:
             TabshAgentPane(sessionID: page.detail ?? "", browser: browser)
                 .id(page.detail)

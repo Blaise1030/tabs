@@ -167,6 +167,13 @@ private struct SplitTabHalf: View {
     /// the address on the tab you're on).
     private var rest: AtRest? { focused && !editing && !narrow ? AtRest.said(tab.restAddress, always: prefs.showsAddress) : nil }
     private var atRest: Bool { rest != nil }
+    /// The ink a title and a mark wear: full on the half the keys are on, a
+    /// little softer under the pointer, faint otherwise — the same three
+    /// weights a row that stands alone uses.
+    private var colour: Color {
+        if focused { return Palette.ink }
+        return hovering ? Palette.ink.opacity(0.7) : Palette.muted
+    }
 
     private var laidOut: some View {
         row
@@ -224,7 +231,7 @@ private struct SplitTabHalf: View {
             .accessibilityHint(interactive ? "Click to focus this page; right-click for tab actions" : "")
             .accessibilityAction(named: "Focus page") { browser.focusPane(tab) }
             .accessibilityAction(named: "Close tab") { if interactive { browser.closeTab(tab) } }
-            .help(title)
+            .help(tab.tabsh?.tooltip ?? title)
     }
 
     /// The grey's shape: round, but square on the side it shares with the
@@ -292,7 +299,14 @@ private struct SplitTabHalf: View {
                 .frame(height: 16)
         } else {
             HStack(spacing: stacked ? 8 : 5) {
-                if prefs.glyph == .icons || narrow {
+                if let session = tab.tabsh {
+                    // A session half wears what its row does when it stands
+                    // alone: the agent's own mark, with the card's state on
+                    // its corner. The generic glyph said nothing of either.
+                    let mark: CGFloat = stacked ? (prefs.roomyTabs ? 17 : 15) : 13
+                    TabshTabMark(tab: tab, session: session, size: mark, tint: colour)
+                        .frame(width: mark, height: mark)
+                } else if prefs.glyph == .icons || narrow {
                     Mark(icon: tab.icon, letter: tab.monogram, size: stacked ? 15 : 13, dim: tab.asleep)
                         .frame(width: stacked ? 15 : 13, height: stacked ? 15 : 13)
                 }
@@ -313,10 +327,26 @@ private struct SplitTabHalf: View {
                         .accessibilityLabel("Asking a question")
                 }
                 if !narrow {
-                    TitleAtRest(label: title, rest: rest, shown: atRest, hovering: hovering,
-                                size: stacked ? prefs.sideTitle : 12,
-                                colour: focused ? Palette.ink : hovering ? Palette.ink.opacity(0.7) : Palette.muted,
-                                roomy: stacked)
+                    // A session's second line — the hook's note, or the folder
+                    // and agent that explain it — is under its title in the
+                    // column, as it is on the row that stands alone. Across the
+                    // top there is one line of height and no room for it.
+                    if stacked, let session = tab.tabsh, !session.subtitle.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            TitleAtRest(label: title, rest: rest, shown: atRest, hovering: hovering,
+                                        size: prefs.sideTitle, colour: colour, roomy: true)
+                            Text(session.subtitle)
+                                .font(.system(size: max(8.5, prefs.sideTitle - 3)))
+                                .foregroundStyle(colour.opacity(0.58))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    } else {
+                        TitleAtRest(label: title, rest: rest, shown: atRest, hovering: hovering,
+                                    size: stacked ? prefs.sideTitle : 12,
+                                    colour: colour,
+                                    roomy: stacked)
+                    }
                 }
             }
         }

@@ -427,9 +427,16 @@ enum Browsers {
     }
     private static var saving = false
 
+    /// How many windows a launch will bring back. The browser is one window,
+    /// plus any a link or ⇧⌘T kept; a file holding more than a handful is not
+    /// a layout to restore — a leaked test run once left thousands here, and
+    /// drawing them took the app down on launch.
+    private static let mostWindows = 8
+
     static func read() -> [WindowRecord] {
         guard let data = try? Data(contentsOf: file) else { return [] }
-        return (try? JSONDecoder().decode([WindowRecord].self, from: data)) ?? []
+        let records = (try? JSONDecoder().decode([WindowRecord].self, from: data)) ?? []
+        return Array(records.prefix(mostWindows))
     }
 
     /// Start with a fresh window (see Session.startFresh): one window, the

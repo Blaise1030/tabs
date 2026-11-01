@@ -66,7 +66,7 @@ struct SideBar: View {
     /// is already taller; icons-only keeps its square tile.
     private func rowHeight(for tab: Tab?) -> CGFloat {
         guard !icons, let tab, tab.tabsh != nil else { return rowHeight }
-        return max(rowHeight, 34)
+        return prefs.sessionRow
     }
     private static let gap: CGFloat = 2
     private static let square: CGFloat = 34
@@ -896,12 +896,23 @@ struct SideBar: View {
 
     /// The foot's door and its margin beneath; with icons only, its doors
     /// one above the other. Nothing there — no extension, download, space or
-    /// profile — takes no room on the column either.
+    /// profile — takes no room on the column either. The sessions' chevron
+    /// keeps the strip while there are cards to fold.
     private var footHeight: CGFloat {
         if icons {
             return CGFloat(SideFoot.doors(prefs, browser.fetches)) * 28 + 8
         }
-        return SideFoot.hasContent(prefs, browser.fetches) ? 26 + 10 : 0
+        return showsFoot ? 26 + 10 : 0
+    }
+
+    /// Whether the sessions panel has cards: while it does, its chevron sits
+    /// at the foot's far end.
+    private var hasSessions: Bool {
+        !TabshStatusPanel.listed(Array(sessions.sessions.values)).isEmpty
+    }
+
+    private var showsFoot: Bool {
+        SideFoot.hasContent(prefs, browser.fetches) || hasSessions
     }
 
     @ViewBuilder
@@ -917,8 +928,9 @@ struct SideBar: View {
     /// there while it has a door to hold.
     @ViewBuilder
     private var foot: some View {
-        if icons || SideFoot.hasContent(prefs, browser.fetches) {
-            SideFoot(browser: browser, prefs: prefs, fetches: browser.fetches, vertical: icons)
+        if icons || showsFoot {
+            SideFoot(browser: browser, prefs: prefs, fetches: browser.fetches,
+                     vertical: icons, sessions: hasSessions)
         }
     }
 
@@ -936,6 +948,13 @@ private struct SideFoot: View {
     /// The column of icons: one above the other, centred, no pinned
     /// extensions (their list is still the puzzle's).
     var vertical = false
+    /// There are session cards above: the far end of the row keeps the
+    /// chevron that folds them away and brings them back.
+    var sessions = false
+
+    /// The sessions panel's fold, the same key the panel reads (see
+    /// TabshStatusPanel): the chevron here is the panel's only heading.
+    @AppStorage("tabsh.status.collapsed") private var folded = false
 
     var body: some View {
         if vertical {
@@ -956,6 +975,14 @@ private struct SideFoot: View {
                 // Only while a download is running, and a moment after.
                 FetchDoor(browser: browser, fetches: fetches)
                 Spacer(minLength: 0)
+                if sessions {
+                    // Where the row had room to spare: the sessions fold, at
+                    // the end opposite the space's own door.
+                    Door(icon: folded ? "chevron.up" : "chevron.down",
+                         help: folded ? "Show Sessions" : "Hide Sessions") {
+                        withAnimation(Motion.quick) { folded.toggle() }
+                    }
+                }
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 10)
@@ -989,6 +1016,7 @@ private struct SideFoot: View {
         if prefs.usesSpaces { kept += 1 }
         if Profiles.shared.several { kept += 1 }
         if FetchDoor.shows(fetches, prefs) { kept += 1 }
+        if sessions { kept += 1 }  // the sessions' chevron, at the far end
         let free = prefs.sideWidth - 2 * 10 + 2 - CGFloat(kept) * door
         return max(0, Int((free / door).rounded(.down)))
     }
@@ -1186,18 +1214,13 @@ private struct SideRow: View {
                     PopupSign(browser: browser, tab: tab, colour: colour)
                     // The page is translated (Translate.swift).
                     TranslateSign(tab: tab, colour: colour)
-                    if let session = tab.tabsh, !session.subtitle.isEmpty {
-                        // The card's own second line: the hook's note, or
-                        // the folder and agent that explain it.
-                        VStack(alignment: .leading, spacing: 0) {
+                    if let session = tab.tabsh {
+                        // The card's own second line, in the one set of
+                        // sizes the Sessions panel draws it at too.
+                        TabshRowTitle(session: session, size: prefs.sideTitle, colour: colour) {
                             TitleAtRest(label: tab.label, rest: rest, shown: atRest,
                                         hovering: hovering, size: prefs.sideTitle,
                                         colour: colour, roomy: true)
-                            Text(session.subtitle)
-                                .font(.system(size: max(8.5, prefs.sideTitle - 3)))
-                                .foregroundStyle(colour.opacity(0.58))
-                                .lineLimit(1)
-                                .truncationMode(.tail)
                         }
                     } else {
                         TitleAtRest(label: tab.label, rest: rest, shown: atRest,
@@ -1220,9 +1243,7 @@ private struct SideRow: View {
                shortcutNumbers[tab.id] == nil {
                 // The card's time on the right, as the board's list shows
                 // it. The cross takes this place under the pointer.
-                Text(session.elapsed)
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(Palette.faint)
+                TabshRowElapsed(session: session)
                     .padding(.trailing, 8)
                     .opacity(hovering ? 0 : 1)
             }
