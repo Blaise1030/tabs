@@ -28,7 +28,7 @@ struct WelcomePanel: View {
 
     private var importsPasswords: Bool { (source ?? ImportSource.installed().first)?.importsPasswords ?? false }
 
-    private let pages = 4
+    private let pages = 5
 
     var body: some View {
         ZStack {
@@ -41,6 +41,7 @@ struct WelcomePanel: View {
                     case 0: welcome
                     case 1: bring
                     case 2: hold
+                    case 3: agents
                     default: links
                     }
                 }
@@ -65,7 +66,7 @@ struct WelcomePanel: View {
         VStack(spacing: 22) {
             Plate(size: 72)
             VStack(spacing: 10) {
-                Text("Search")
+                Text("Tabs")
                     .font(.system(size: 34, weight: .medium))
                     .foregroundStyle(Palette.ink)
                 Text("A browser with nothing in the way. Four megabytes, the engine already in your Mac, and as little around the page as we could manage.")
@@ -134,7 +135,7 @@ struct WelcomePanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            // Safari, a browser on another Mac, one Search can't read: what
+            // Safari, a browser on another Mac, one Tabs can't read: what
             // it exported, bookmarks, passwords or Safari's own ZIP.
             Pill("From a file another browser exported…") { browser.importFile() }
         }
@@ -160,6 +161,13 @@ struct WelcomePanel: View {
         }
     }
 
+    private var agents: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            heading("Connect your agents.", "New Agent starts a coding agent for you. These are the ones tabsh knows: pick the one it should start, and give each the commands it runs in a terminal or speaks over ACP for a chat card.")
+            AgentProvidersSettings()
+        }
+    }
+
     private var links: some View {
         VStack(alignment: .leading, spacing: 22) {
             heading("Links from other apps.", "A click in Mail, in Slack, in a PDF — macOS sends it to whichever browser is the default. It can be this one.")
@@ -168,7 +176,7 @@ struct WelcomePanel: View {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark")
                             .font(.system(size: 11, weight: .medium))
-                        Text("Search is the default browser")
+                        Text("Tabs is the default browser")
                     }
                     .font(.system(size: 13))
                     .foregroundStyle(Palette.ink)
@@ -202,9 +210,9 @@ struct WelcomePanel: View {
                 Key("⌘L", "Suggestions from your search engine as you type — off until you turn them on in Settings › Browsing.")
                 Key("⌘", "Held, it can show each tab's number for ⌘1–9. Settings › Tabs.")
                 Key("⌘1", "Pressed again on its pin, back to where you were.")
-                Key("⇧⌘P", "Float a video in Search's window, or in macOS's picture in picture. Settings › Browsing.")
+                Key("⇧⌘P", "Float a video in Tabs' window, or in macOS's picture in picture. Settings › Browsing.")
                 Key("⌃-click", "Claude or ChatGPT in a side panel beside the page: right-click a tab › Open in Side Panel, or View › Side Panel.")
-                Key("⌘Q", "Search can ask before it quits. Settings › General.")
+                Key("⌘Q", "Tabs can ask before it quits. Settings › General.")
                 Key("⌘,", "Your Apple passwords, under the sign-in field — Settings › Passwords.")
                 if PageTranslator.available {
                     Key("⌃-click", "Translate a page into your language, on this Mac — nothing is sent anywhere. Right-click the page › Translate Page.")

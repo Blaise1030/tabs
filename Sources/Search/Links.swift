@@ -33,7 +33,7 @@ final class Links: NSObject, NSApplicationDelegate {
         askingToQuit = true
         defer { askingToQuit = false }
         let alert = NSAlert()
-        alert.messageText = "Quit Search?"
+        alert.messageText = "Quit Tabs?"
         alert.informativeText = "Your windows and tabs will close."
         alert.addButton(withTitle: "Quit").keyEquivalent = ""
         let cancel = alert.addButton(withTitle: "Cancel")
@@ -138,7 +138,18 @@ final class Links: NSObject, NSApplicationDelegate {
         // here, before the first is drawn, once more a turn later, and as
         // each is dressed. Open, with their tabs, and written down as they
         // were, until one is wanted (see Browsers.keepAway).
-        MainActor.assumeIsolated { Browsers.putAway() }
+        MainActor.assumeIsolated {
+            Browsers.putAway()
+            // The daemon behind the session tabs: this browser's own instance,
+            // started from the copy this app carries (see TabshDaemon).
+            TabshDaemon.shared.startIfNeeded()
+            // The cards those tabs stand for, and the socket their hooks
+            // move them through (see TabshSessions).
+            TabshSessions.shared.start()
+            // Typing in the editor, terminals and the agent composer, if a
+            // pack has been chosen (see TypingSounds).
+            TypingSounds.shared.start()
+        }
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 Browsers.putAway()
@@ -170,7 +181,7 @@ final class Links: NSObject, NSApplicationDelegate {
 
     /// Files and anything else the system opens with the app: an address, or
     /// a page on this Mac — an .html or .xhtml double-clicked in the Finder
-    /// once Search is the Mac's browser (it says it can open them, see
+    /// once Tabs is the Mac's browser (it says it can open them, see
     /// build.sh), which this used to drop without a word.
     func application(_ application: NSApplication, open urls: [URL]) {
         guard !Store.testing else { return }
@@ -267,7 +278,7 @@ final class Links: NSObject, NSApplicationDelegate {
     /// forward for Mail. Since macOS 14 an app is let in front when the app
     /// it is asked by hands the front over, and asks with `activate()`.
     /// Not every app hands it over: a link clicked in Notion, and in other
-    /// apps built on Electron, left Search behind them. So if Search still
+    /// apps built on Electron, left Search behind them. So if Tabs still
     /// isn't in front a moment later, it asks again the way it did before
     /// macOS 14.
     @MainActor
@@ -303,7 +314,7 @@ final class Links: NSObject, NSApplicationDelegate {
     /// is — closed, in the Dock, behind another app, or never opened by a
     /// launch this link made. It went through `deliver`, which brings a
     /// window back first, so the browser came up behind the small window
-    /// every time. Open in Search is what brings it now.
+    /// every time. Open in Tabs is what brings it now.
     @MainActor
     private static func little(_ url: URL) -> Bool {
         guard Shared.prefs.littleLinks else { return false }
@@ -319,7 +330,7 @@ final class Links: NSObject, NSApplicationDelegate {
     /// and SwiftUI — seeing a launch that came to open something rather than
     /// a plain one — leaves its window for that event to open. It never sees
     /// the event, so nothing opened it: every link clicked in another app
-    /// while Search was closed launched it with no window and the page
+    /// while Tabs was closed launched it with no window and the page
     /// nowhere. SwiftUI's delegate is asked instead for what a plain launch
     /// gets, its window; a single window, so asking twice can't make two.
     @MainActor

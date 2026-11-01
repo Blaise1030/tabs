@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bounded live WebKit worker-port checks, using a disposable hidden Search.
 
-Build Search.app first (on Intel, copy build/intel/Search.app to build/Search.app)
+Build Tabs.app first (on Intel, copy build/intel/Tabs.app to build/Tabs.app)
 then run: python3 Tests/ExtensionWorkerRecovery/live.py
 
 Uses split_view's isolated SEARCH_PROBE lifecycle and the existing bench
@@ -1119,7 +1119,7 @@ def main(argv=None):
         print('NOT RUN: WKWebExtension requires macOS 15.4 or newer.', flush=True)
         return 2
     if not (APP / 'Contents/MacOS/Search').is_file():
-        print(f'NOT RUN: built app missing at {APP}; build first (copy build/intel/Search.app here on Intel).', flush=True)
+        print(f'NOT RUN: built app missing at {APP}; build first (copy build/intel/Tabs.app here on Intel).', flush=True)
         return 2
     signal.signal(signal.SIGALRM, expired)
     signal.alarm(LLDB_WORK_TIMEOUT if options.lldb_launch else WORK_TIMEOUT)

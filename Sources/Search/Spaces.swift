@@ -115,7 +115,7 @@ enum Spaces {
     }
 
     /// Whether a spaces.json carries the user's order. A move made now marks
-    /// it. A move made by an older Search is also recognised: within each
+    /// it. A move made by an older Tabs is also recognised: within each
     /// profile's block, its home away from the front could only have been
     /// written by that move. Older untouched files still read home first.
     private static func keepsOrder(in spaces: [Space]) -> Bool {

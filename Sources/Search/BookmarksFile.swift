@@ -2,7 +2,7 @@ import Foundation
 
 // A bookmarks file, as every browser exports one: Chrome, Safari, Firefox,
 // Arc and the rest all write the same old Netscape format, an HTML page of
-// nested lists. It is the one way in from a browser Search can't read
+// nested lists. It is the one way in from a browser Tabs can't read
 // directly, or from another Mac.
 //
 //     <DT><H3>Folder</H3>

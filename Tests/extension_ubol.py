@@ -2,7 +2,7 @@
 """uBlock Origin Lite's rules don't blank pages (#709) — in a hidden probe.
 
 Build first (`./build.sh`), then `python3 Tests/extension_ubol.py`. Same
-harness as extension_rule_redirect.py: a copy of build/Search.app under a
+harness as extension_rule_redirect.py: a copy of build/Tabs.app under a
 bundle id of its own, in a world of its own, started hidden; the copy, its
 WebKit folders and the world are removed afterwards.
 

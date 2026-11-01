@@ -9,11 +9,21 @@ import SwiftUI
 struct SideBar: View {
     @ObservedObject var browser: Browser
     @ObservedObject var prefs: Preferences
+    /// Session cards come and go outside the browser, and a session row's
+    /// height depends on its card: the column listens so its own height does.
+    @ObservedObject private var sessions = TabshSessions.shared
     /// On the window's ground, beside the page's card (see CardEdge): the
     /// ground's colour and no edge of its own, the card's edge being the line.
     var onFrame = false
     /// The greys for that ground, handed down to every row, pin and door.
     private var greys: Greys { onFrame ? .frame : .white }
+
+    /// The ground the column and its scroll fades sit on.
+    private var ground: Color {
+        if let theme = browser.chromeTheme { return Color(nsColor: theme.color) }
+        if landing { return greys.hover }
+        return onFrame ? Palette.frame : Palette.ground
+    }
 
     @Namespace private var pill
 
@@ -50,6 +60,14 @@ struct SideBar: View {
 
     /// A tab's line: taller with roomier tabs turned on.
     private var rowHeight: CGFloat { prefs.sideRow }
+
+    /// A session's line carries the card's note under its title, so it needs
+    /// a little more room than a web tab's. The roomy setting wins when it
+    /// is already taller; icons-only keeps its square tile.
+    private func rowHeight(for tab: Tab?) -> CGFloat {
+        guard !icons, let tab, tab.tabsh != nil else { return rowHeight }
+        return max(rowHeight, 34)
+    }
     private static let gap: CGFloat = 2
     private static let square: CGFloat = 34
     private static let pinGap: CGFloat = 4
@@ -114,6 +132,10 @@ struct SideBar: View {
                         Color.clear.frame(width: lights)
                         Helm(browser: browser)
                         Spacer(minLength: 0)
+                        // Bookmarks kept at the top's far end, where the
+                        // window's own buttons leave the row's right corner.
+                        BookmarkDoor(browser: browser, arrowEdge: .bottom)
+                            .padding(.trailing, 8)
                     }
                     .frame(height: Metrics.strip)
                 }
@@ -124,6 +146,13 @@ struct SideBar: View {
                 pages
 
                 Spacer(minLength: 0)
+
+                // The cards the tabs stand for, grouped by the status their
+                // hooks move (see TabshSessions). Hidden when the column has
+                // been folded to icons.
+                if !icons {
+                    TabshStatusPanel(browser: browser)
+                }
             }
             .padding(.horizontal, 10)
             // Clear of the foot, which sits over the column's bottom edge.
@@ -142,14 +171,15 @@ struct SideBar: View {
         .onAppear { SpaceSwipe.shared.start(for: browser) }
         .background {
             ZStack {
-                landing ? greys.hover : onFrame ? Palette.frame : Palette.ground
+                // The ground around the page card follows the page too: the
+                // column and the gap are one slate with the strip (see
+                // ChromeTheme), rather than the column keeping a palette grey
+                // beside a page-tinted gap.
+                ground
                 if prefs.splitView {
                     SplitDropZone(browser: browser, tab: nil, kind: .strip)
                 }
             }
-        }
-        .overlay(alignment: innerEdge) {
-            if !onFrame { Rectangle().fill(Palette.hairline).frame(width: 1) }
         }
         // A fixed width with icons only: nothing to pull.
         .overlay(alignment: innerEdge) { if !icons { edge } }
@@ -172,7 +202,9 @@ struct SideBar: View {
     /// can be taken before it is. Edge to edge, the pill sits on the page's
     /// hairline; as cards, in the gap before the page.
     private var edge: some View {
-        EdgeGrip(lit: onEdge || grabbed != nil)
+        // The same resting pill the file explorer shows on its edge: the
+        // column has no border, and the grip alone says it can be pulled.
+        EdgeGrip(lit: onEdge || grabbed != nil, resting: true)
             .offset(x: onFrame ? 0 : onRight ? -4 : 4)
             .frame(width: 9)
             .frame(maxHeight: .infinity)
@@ -287,6 +319,10 @@ struct SideBar: View {
                                         }
                                 }
                                 .padding(.trailing, -10)
+                                // The rows fade into the column at both
+                                // ends instead of being cut by the scroll
+                                // view's edge.
+                                .overlay { ScrollFade(background: ground, height: 18) }
                                 // The tab you go to is the tab you see — ⌘1–⌘9,
                                 // ⇧⌘], a link opening beside the one on screen.
                                 .onChange(of: browser.activeID) { _, id in
@@ -385,7 +421,8 @@ struct SideBar: View {
                                  pill: pill, close: {}, interactive: false)
                     } else {
                         SideRow(browser: browser, prefs: prefs, tab: tab, live: tab.id == row.active,
-                                pill: pill, close: {}, interactive: false)
+                                pill: pill, close: {}, interactive: false,
+                                height: rowHeight(for: tab))
                     }
                 }
                 // Its groups, folded as they were left (see Parked.drawn).
@@ -433,13 +470,16 @@ struct SideBar: View {
             ? displayed.filter { $0.pin == nil && browser.group(of: $0) == nil } + grouped.flatMap { $0 }
             : displayed.filter { $0.pin == nil }
         // A pair is two lines (see SplitTabItem).
-        let pairs = rows.filter { browser.split(for: $0) != nil }.count
         let heading = icons ? GroupHeading.compactHeight : GroupHeading.height
         // A folded group showing none of its tabs still has its empty stack
         // of them under its heading, and the gap after it.
         let headings = CGFloat(grouped.count) * (heading + SideBar.gap)
             + CGFloat(grouped.filter(\.isEmpty).count) * SideBar.gap
-        let loose = CGFloat(rows.count) * (rowHeight + SideBar.gap) + CGFloat(pairs) * rowHeight + headings
+        let loose = rows.reduce(CGFloat.zero) { $0 + rowHeight(for: $1) }
+            + CGFloat(rows.count) * SideBar.gap
+            + rows.filter { browser.split(for: $0) != nil }
+                .reduce(CGFloat.zero) { $0 + rowHeight(for: $1) }
+            + headings
         return listBlock + loose + rowHeight + 8
     }
 
@@ -465,7 +505,7 @@ struct SideBar: View {
             }
         } else if let pair, let right = tabs.first(where: { $0.id == pair.right }) {
             SplitTabItem(browser: browser, prefs: prefs, left: tab, right: right,
-                         width: nil, height: rowHeight,
+                         width: nil, height: max(rowHeight(for: tab), rowHeight(for: right)),
                          live: activeID.map { pair.contains($0) } ?? false,
                          focusedID: activeID,
                          interactive: interactive, pill: pill)
@@ -473,7 +513,7 @@ struct SideBar: View {
         } else {
             SideRow(browser: browser, prefs: prefs, tab: tab,
                     live: tab.id == activeID, pill: pill, close: close,
-                    interactive: interactive)
+                    interactive: interactive, height: rowHeight(for: tab))
         }
     }
 
@@ -600,7 +640,8 @@ struct SideBar: View {
                     } else {
                         SideRow(browser: browser, prefs: prefs, tab: tab,
                                 live: tab.id == browser.activeID, pill: pill,
-                                close: { browser.close(tab) })
+                                close: { browser.close(tab) },
+                                height: max(rowHeight, 34))
                     }
                 }
                     .modifier(Carried(index: index, count: pins.count,
@@ -646,7 +687,8 @@ struct SideBar: View {
                     ForEach(Array(loose.enumerated()), id: \.element.id) { index, tab in
                         let step = rowHeight + SideBar.gap
                         if ghost == index, let carried = crossingTab {
-                            RowGhost(tab: carried, height: rowHeight, size: prefs.sideTitle)
+                            RowGhost(tab: carried, height: rowHeight(for: carried),
+                                     size: prefs.sideTitle)
                         }
                         rowItem(tab, tabs: browser.tabs, splits: browser.splits,
                                 activeID: browser.activeID, interactive: true, pill: pill,
@@ -667,7 +709,8 @@ struct SideBar: View {
                         })
                     }
                     if let ghost, ghost >= loose.count, let carried = crossingTab {
-                        RowGhost(tab: carried, height: rowHeight, size: prefs.sideTitle)
+                        RowGhost(tab: carried, height: rowHeight(for: carried),
+                                 size: prefs.sideTitle)
                     }
                 }
                 .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("column")) }) { [frames] in frames.loose = $0 }
@@ -708,7 +751,7 @@ struct SideBar: View {
             }
             // A pin carried over its heading goes in at the end.
             if crossing?.target == .group(group.id), let carried = crossingTab {
-                RowGhost(tab: carried, height: rowHeight, size: prefs.sideTitle)
+                RowGhost(tab: carried, height: rowHeight(for: carried), size: prefs.sideTitle)
                     .padding(.leading, icons ? 0 : 14)
             }
         }
@@ -788,8 +831,16 @@ struct SideBar: View {
             }
             let loose = looseTabs
             guard !loose.isEmpty, let top = frames.loose?.minY else { return .loose(0) }
-            let ghost: (Int, CGFloat)? = if case .loose(let at)? = crossing?.target { (at, rowHeight) } else { nil }
-            let heights = loose.map { browser.split(for: $0) != nil ? rowHeight * 2 : rowHeight }
+            let ghost: (Int, CGFloat)? = if case .loose(let at)? = crossing?.target {
+                (at, at < loose.count ? rowHeight(for: loose[at]) : rowHeight)
+            } else {
+                nil
+            }
+            let heights = loose.map {
+                browser.split(for: $0) != nil
+                    ? rowHeight(for: $0) * 2
+                    : rowHeight(for: $0)
+            }
             return .loose(PinDrop.rowSlot(y: point.y - top, heights: heights, gap: SideBar.gap, ghost: ghost))
         }
     }
@@ -844,26 +895,31 @@ struct SideBar: View {
     }
 
     /// The foot's door and its margin beneath; with icons only, its doors
-    /// one above the other.
+    /// one above the other. Nothing there — no extension, download, space or
+    /// profile — takes no room on the column either.
     private var footHeight: CGFloat {
-        icons ? CGFloat(SideFoot.doors(prefs, browser.fetches)) * 28 + 8 : 26 + 10
+        if icons {
+            return CGFloat(SideFoot.doors(prefs, browser.fetches)) * 28 + 8
+        }
+        return SideFoot.hasContent(prefs, browser.fetches) ? 26 + 10 : 0
     }
 
     @ViewBuilder
     private var newTab: some View {
-        if icons {
-            Quiet(icon: "plus", title: "", height: rowHeight, size: prefs.sideTitle, centred: true) { browser.launch() }
-                .help("New Tab   ⌘T")
-                .padding(.top, SideBar.gap)
-        } else {
-            Quiet(icon: "plus", title: "New tab", height: rowHeight, size: prefs.sideTitle) { browser.launch() }
-                .padding(.top, SideBar.gap)
-        }
+        // The two kinds of tab the browser has: a web page, or a tabsh
+        // terminal in one of its own (see Tabsh.swift).
+        NewTabMenu(browser: browser, height: rowHeight, size: prefs.sideTitle, centred: icons)
+            .help("New Tab or New Terminal")
+            .padding(.top, SideBar.gap)
     }
 
-    /// One small door at the bottom: the settings.
+    /// One small door at the bottom: the settings. In the column it is only
+    /// there while it has a door to hold.
+    @ViewBuilder
     private var foot: some View {
-        SideFoot(browser: browser, prefs: prefs, fetches: browser.fetches, vertical: icons)
+        if icons || SideFoot.hasContent(prefs, browser.fetches) {
+            SideFoot(browser: browser, prefs: prefs, fetches: browser.fetches, vertical: icons)
+        }
     }
 
 }
@@ -897,7 +953,6 @@ private struct SideFoot: View {
                 if Profiles.shared.several { ProfileBadge(browser: browser) }
                 if prefs.usesSpaces { SpaceDot(browser: browser) }
                 ExtensionSlot(edge: .trailing, room: room)
-                BookmarkDoor(browser: browser, arrowEdge: .trailing)
                 // Only while a download is running, and a moment after.
                 FetchDoor(browser: browser, fetches: fetches)
                 Spacer(minLength: 0)
@@ -905,6 +960,16 @@ private struct SideFoot: View {
             .padding(.horizontal, 10)
             .padding(.bottom, 10)
         }
+    }
+
+    /// Anything at all at the foot: a profile, a space, a download or an
+    /// extension. The bookmark moved to the top row, so on its own it no
+    /// longer keeps the strip under the rows.
+    @MainActor static func hasContent(_ prefs: Preferences, _ fetches: Fetches) -> Bool {
+        if Profiles.shared.several || prefs.usesSpaces { return true }
+        if FetchDoor.shows(fetches, prefs) { return true }
+        if #available(macOS 15.4, *), !Extensions.shared.installed.isEmpty { return true }
+        return false
     }
 
     /// How many doors the foot has, stacked: what the rows stop short of.
@@ -920,7 +985,7 @@ private struct SideFoot: View {
     /// is 26 points, with 2 between them.
     private var room: Int {
         let door: CGFloat = 26 + 2
-        var kept = 2  // the puzzle and bookmarks
+        var kept = 1  // the puzzle; bookmarks are in the top row now
         if prefs.usesSpaces { kept += 1 }
         if Profiles.shared.several { kept += 1 }
         if FetchDoor.shows(fetches, prefs) { kept += 1 }
@@ -1058,6 +1123,9 @@ private struct SideRow: View {
     let pill: Namespace.ID
     let close: () -> Void
     var interactive = true
+    var height: CGFloat? = nil
+
+    private var rowHeight: CGFloat { height ?? prefs.sideRow }
 
     @State private var hovering = false
     @State private var selectedOnPress = false
@@ -1089,7 +1157,11 @@ private struct SideRow: View {
                     TabAddressField(browser: browser)
                         .frame(height: 16)
                 } else {
-                    if prefs.glyph == .icons, !tab.isBlank {
+                    if let session = tab.tabsh {
+                        TabshTabMark(tab: tab, session: session,
+                                     size: prefs.roomyTabs ? 17 : 15,
+                                     tint: colour)
+                    } else if prefs.glyph == .icons, !tab.isBlank {
                         Mark(icon: tab.icon, letter: tab.monogram, size: prefs.roomyTabs ? 17 : 15)
                     }
                     if tab.bench {
@@ -1114,19 +1186,46 @@ private struct SideRow: View {
                     PopupSign(browser: browser, tab: tab, colour: colour)
                     // The page is translated (Translate.swift).
                     TranslateSign(tab: tab, colour: colour)
-                    TitleAtRest(label: tab.label, rest: rest, shown: atRest, hovering: hovering,
-                                size: prefs.sideTitle, colour: colour, roomy: true)
+                    if let session = tab.tabsh, !session.subtitle.isEmpty {
+                        // The card's own second line: the hook's note, or
+                        // the folder and agent that explain it.
+                        VStack(alignment: .leading, spacing: 0) {
+                            TitleAtRest(label: tab.label, rest: rest, shown: atRest,
+                                        hovering: hovering, size: prefs.sideTitle,
+                                        colour: colour, roomy: true)
+                            Text(session.subtitle)
+                                .font(.system(size: max(8.5, prefs.sideTitle - 3)))
+                                .foregroundStyle(colour.opacity(0.58))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    } else {
+                        TitleAtRest(label: tab.label, rest: rest, shown: atRest,
+                                    hovering: hovering, size: prefs.sideTitle,
+                                    colour: colour, roomy: true)
+                    }
                 }
                 Spacer(minLength: 0)
             }
             .padding(.leading, 10)
             .padding(.trailing, status || peeking ? 0 : 10)
-            .frame(height: prefs.sideRow)
+            .frame(height: rowHeight)
             .contentShape(Rectangle())
             .modifier(TabPress(enabled: interactive && !editing, active: live, selected: $selectedOnPress, pressing: $pressed) {
                 browser.clearTabSelection()
                 browser.select(tab)
             })
+
+            if let session = tab.tabsh, !editing, !status, !peeking,
+               shortcutNumbers[tab.id] == nil {
+                // The card's time on the right, as the board's list shows
+                // it. The cross takes this place under the pointer.
+                Text(session.elapsed)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(Palette.faint)
+                    .padding(.trailing, 8)
+                    .opacity(hovering ? 0 : 1)
+            }
 
             if peeking, let page = browser.peekTab {
                 // Under the pointer the cross takes its place, unless the
@@ -1156,7 +1255,7 @@ private struct SideRow: View {
             }
         }
         .padding(.trailing, status || peeking ? 7 : 0)
-        .frame(height: prefs.sideRow)
+        .frame(height: rowHeight)
         .frame(maxWidth: .infinity, alignment: .leading)
         // The title keeps its length under the pointer and fades out
         // beneath the cross, rather than being cut shorter, so its end
@@ -1190,7 +1289,7 @@ private struct SideRow: View {
                 .frame(width: 15, height: 15)
                 .overlay {
                     Color.clear
-                        .frame(width: 30, height: prefs.sideRow)
+                        .frame(width: 30, height: rowHeight)
                         .contentShape(Rectangle())
                         .onTapGesture { if hovering { close() } }
                 }
@@ -1221,6 +1320,7 @@ private struct SideRow: View {
         .modifier(ModifiedTabClick { if interactive && !editing { browser.extendTabSelection(to: tab, modifiers: $0) } })
         .overlay { if interactive { MiddleClick(act: close) } }
         .onHover(perform: hover)
+        .help(tab.tabsh?.tooltip ?? "")
         .onAppear { if interactive { Bench.rowAppeared(tab.id, hover: hover) } }
         .onDisappear { if interactive { Bench.rowDisappeared(tab.id) } }
         .contextMenu { if interactive { TabMenu(browser: browser, tab: tab, close: close) } }
@@ -1270,6 +1370,88 @@ private struct SideRow: View {
 }
 
 /// A row that is an action rather than a page. Quiet until the pointer is on it.
+/// The column's "New tab" row, as a menu: a web tab, or a terminal from the
+/// daemon. The row keeps Quiet's look, with a chevron that says it opens
+/// something rather than going straight to a blank page. AppKit's own menu is
+/// used rather than SwiftUI's: a Menu in this row drops its trailing views,
+/// and the chevron is the whole point of the change.
+private struct NewTabMenu: View {
+    @ObservedObject var browser: Browser
+    var height: CGFloat = 28
+    var size: CGFloat = 12.5
+    /// The icon alone, in the middle: the column of icons' new tab.
+    var centred = false
+
+    @Environment(\.greys) private var greys
+    @State private var hovering = false
+    @State private var actions = NewTabActions()
+
+    var body: some View {
+        Button(action: popup) {
+            HStack(spacing: 8) {
+                if centred { Spacer(minLength: 0) }
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .medium))
+                    .frame(width: 15)
+                if !centred {
+                    Text("New tab")
+                        .font(.system(size: size))
+                }
+                Spacer(minLength: 0)
+                if !centred {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Palette.muted.opacity(hovering ? 1 : 0.7))
+                        .padding(.trailing, 2)
+                }
+            }
+            .foregroundStyle(hovering ? Palette.ink.opacity(0.7) : Palette.faint)
+            .padding(.leading, centred ? 0 : 10)
+            .padding(.trailing, centred ? 0 : 10)
+            .frame(height: height)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(hovering ? greys.hover : .clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(Motion.quick, value: hovering)
+        .onAppear { actions.browser = browser }
+        .onChange(of: browser) { _, next in actions.browser = next }
+    }
+
+    private func popup() {
+        actions.browser = browser
+        let menu = NSMenu()
+        let tab = NSMenuItem(title: "New Tab", action: #selector(NewTabActions.newTab), keyEquivalent: "t")
+        tab.target = actions
+        menu.addItem(tab)
+        let terminal = NSMenuItem(title: "New Terminal", action: #selector(NewTabActions.newTerminal), keyEquivalent: "T")
+        terminal.target = actions
+        menu.addItem(terminal)
+        let agentComposer = NSMenuItem(title: "New Agent…", action: #selector(NewTabActions.newAgentComposer), keyEquivalent: "A")
+        agentComposer.target = actions
+        menu.addItem(agentComposer)
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow,
+              let view = window.contentView else { return }
+        let point = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        menu.popUp(positioning: nil, at: view.convert(point, from: nil), in: view)
+    }
+}
+
+/// What the row's menu sends to the browser.
+@MainActor private final class NewTabActions: NSObject {
+    weak var browser: Browser?
+
+    @objc func newTab() { browser?.launch() }
+    @objc func newTerminal() { browser?.newTerminal() }
+    @objc func newAgent() { browser?.newAgent() }
+    @objc func newAgentComposer() { browser?.show(InternalPage(.agentComposer)) }
+}
+
 struct Quiet: View {
     @Environment(\.greys) private var greys
     let icon: String

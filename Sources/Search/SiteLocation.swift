@@ -7,12 +7,12 @@ import WebKit
 // On the Mac, WebKit then asks the app for the position through a C provider
 // set on the process pool's geolocation manager, and without one it asks
 // nobody: the page you allowed waits out its timeout, and macOS never hears
-// of Search — it was missing from System Settings › Location Services (#387).
+// of Tabs — it was missing from System Settings › Location Services (#387).
 // Safari and other WebKit browsers on the Mac bring a provider of their own,
 // and so does Search, here.
 //
 // CoreLocation is touched only when WebKit starts updating, which it does
-// only after a page has been allowed, in Search's own card or by an Always
+// only after a page has been allowed, in Tabs' own card or by an Always
 // allow you gave that site earlier. So macOS's question comes after yours,
 // never at launch. A test run never touches CoreLocation at all: the page is
 // told its position can't be found.
@@ -104,7 +104,7 @@ final class SiteLocation {
     var makeLocator: @MainActor () -> Locating? = { Store.testing ? nil : CoreLocator() }
     /// Told when macOS refuses Search the location, so the page you allowed
     /// isn't simply left with an error and no reason.
-    var refused: (@MainActor () -> Void)? = { Browsers.front?.announce("macOS isn't sharing your location with Search") }
+    var refused: (@MainActor () -> Void)? = { Browsers.front?.announce("macOS isn't sharing your location with Tabs") }
 
     private var locator: Locating?
     /// The geolocation managers waiting for a position (one per process pool).

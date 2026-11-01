@@ -20,13 +20,13 @@ final class TabSwitcher: ObservableObject {
         case reload
         /// ⌃M: its sound off, or on again.
         case mute
-        /// ⌃O: a small window into the row, as its Open in Search.
+        /// ⌃O: a small window into the row, as its Open in Tabs.
         case keep
 
         init?(_ event: NSEvent) {
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard flags == .control else { return nil }
-            // As Search's other shortcuts read their keys: through the Latin
+            // As Tabs' other shortcuts read their keys: through the Latin
             // layout when the one in use can't type Latin (see KeyLayout).
             switch event.shortcutCharacters {
             case "w": self = .close
@@ -457,10 +457,10 @@ struct TabSwitcherOverlay: View {
     }
 
     /// The letters that act on the card picked while ⌃ is held (see
-    /// TabSwitcher.Action), under the grid; Open in Search only on a moon.
+    /// TabSwitcher.Action), under the grid; Open in Tabs only on a moon.
     private var legend: some View {
         let moon = switcher.selectedID.map(switcher.moons.contains) == true
-        let keys = [("W", "Close"), ("R", "Reload"), ("M", "Mute")] + (moon ? [("O", "Open in Search")] : [])
+        let keys = [("W", "Close"), ("R", "Reload"), ("M", "Mute")] + (moon ? [("O", "Open in Tabs")] : [])
         return HStack(spacing: 14) {
             ForEach(keys, id: \.0) { key, name in
                 HStack(spacing: 4) {

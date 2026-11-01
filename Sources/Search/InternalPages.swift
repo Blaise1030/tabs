@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// Search's own pages — Settings, History, Downloads, Bookmarks, Passwords,
+// Tabs' own pages — Settings, History, Downloads, Bookmarks, Passwords,
 // Bring Things Over and the release notes — each in a tab of its own, as
 // chrome://settings is in Chrome, rather than a card over the page. A tab
 // is something you can leave open beside your work, come back to with ⌃Tab,
@@ -12,12 +12,17 @@ import SwiftUI
 // the field shows, the session keeps, and code can open directly. Nothing
 // about them reaches WebKit: the tab holds no web view while it shows one.
 
-/// Which of Search's own pages, and where inside it.
+/// Which of Tabs' own pages, and where inside it.
 struct InternalPage: Equatable {
     enum Kind: String, CaseIterable {
         case settings, history, downloads, bookmarks, passwords
         case importing = "import"
         case notes = "release-notes"
+        case editor
+        case tabsh
+        case preview
+        case agent
+        case agentComposer
     }
 
     var kind: Kind
@@ -57,6 +62,19 @@ struct InternalPage: Equatable {
         case .passwords: return "Passwords"
         case .importing: return "Bring Things Over"
         case .notes: return "What's New"
+        case .editor:
+            // The file's own name, read off the path the address carries.
+            guard let detail, !detail.isEmpty else { return "Editor" }
+            return (detail as NSString).lastPathComponent
+        case .tabsh:
+            return "Terminal"
+        case .agent:
+            return "Agent"
+        case .preview:
+            guard let detail, !detail.isEmpty else { return "Preview" }
+            return (detail as NSString).lastPathComponent
+        case .agentComposer:
+            return "New Agent"
         }
     }
 
@@ -69,6 +87,11 @@ struct InternalPage: Equatable {
         case .passwords: return "key"
         case .importing: return "square.and.arrow.down"
         case .notes: return "sparkles"
+        case .editor: return "curlybraces"
+        case .tabsh: return "terminal"
+        case .agent: return "bubble.left.and.bubble.right"
+        case .preview: return "eye"
+        case .agentComposer: return "sparkles"
         }
     }
 
@@ -113,7 +136,7 @@ extension View {
     func listHeight(_ cap: CGFloat) -> some View { modifier(ListHeight(cap: cap)) }
 }
 
-/// One of Search's own pages, where a web page would be: on the stage, on
+/// One of Tabs' own pages, where a web page would be: on the stage, on
 /// its card when pages are cards, in either pane of a pair.
 struct InternalPageView: View {
     @ObservedObject var browser: Browser
@@ -163,6 +186,17 @@ struct InternalPageView: View {
             ImportPanel(browser: browser)
         case .notes:
             ReleaseNotesPanel { browser.putAway(.notes) }
+        case .editor:
+            EditorPanel(path: page.detail ?? "")
+        case .tabsh:
+            TabshTerminalPane(sessionID: page.detail ?? "", browser: browser)
+        case .agent:
+            TabshAgentPane(sessionID: page.detail ?? "", browser: browser)
+                .id(page.detail)
+        case .preview:
+            PreviewPanel(path: page.detail ?? "", browser: browser)
+        case .agentComposer:
+            AgentComposer(browser: browser)
         }
     }
 }

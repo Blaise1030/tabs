@@ -57,7 +57,7 @@ struct ExtensionsPage: View {
                                     .disabled(Crx.id(in: link) == nil)
                             }
                         }
-                        Text("Or find it in the store and press Add to Search on its page.")
+                        Text("Or find it in the store and press Add to Tabs on its page.")
                             .font(.system(size: 11.5))
                             .foregroundStyle(Palette.muted)
                             .fixedSize(horizontal: false, vertical: true)
@@ -251,7 +251,7 @@ struct StoreOffer: View {
         @ObservedObject var extensions: Extensions
 
         var body: some View {
-            // Only where the page's own "Add to Search" isn't in place — a
+            // Only where the page's own "Add to Tabs" isn't in place — a
             // store that has changed its markup still gets a way in.
             if let url = tab.address, let id = Crx.storeID(of: url),
                tab.storePlaced != id, !extensions.installed.contains(where: { $0.id == id }) {
@@ -259,7 +259,7 @@ struct StoreOffer: View {
                     Image(systemName: "puzzlepiece.extension")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Palette.muted)
-                    Text(extensions.busy == id ? "Adding…" : "Add this extension to Search")
+                    Text(extensions.busy == id ? "Adding…" : "Add this extension to Tabs")
                         .font(.system(size: 12.5))
                         .foregroundStyle(Palette.ink)
                     if extensions.busy == id {
@@ -294,7 +294,7 @@ struct StoreOffer: View {
 }
 
 /// Settings › Browsing › Searching › Home page: what a new tab opens to, while an
-/// extension offers a page for it. Search's own page with the address field
+/// extension offers a page for it. Tabs' own page with the address field
 /// ready, or the page of an extension that asked to take its place, and
 /// the way back from one that did. With nothing offered there is nothing to
 /// pick, so the line isn't there at all, and neither is its hairline.
@@ -319,7 +319,7 @@ struct HomePageLine: View {
                         get: { current ?? "" },
                         set: { extensions.setNewTabPage($0.isEmpty ? nil : $0) }
                     )) {
-                        Text("Search's own").tag("")
+                        Text("Tabs' own").tag("")
                         Divider()
                         ForEach(askers) { Text($0.name).tag($0.id) }
                     }

@@ -81,7 +81,7 @@ private struct PaneLayers: View {
     let paired: Bool
     let width: CGFloat
     var hovered = false
-    /// The page's corners, for Search's own pages drawn here (see InternalPages.swift).
+    /// The page's corners, for Tabs' own pages drawn here (see InternalPages.swift).
     var corner: CGFloat = 0
 
     private var focused: Bool { browser.activeID == tab.id }
@@ -269,7 +269,7 @@ private struct OpenTabRow: View {
 /// alert(), confirm() or prompt() from a page of the pair, over that page
 /// only: the page dims, the other one goes on working. Named for the site
 /// that asks — the asking frame's own — and plain, so nothing on it passes
-/// for Search's. It takes no keys by itself: typing meant for the other page
+/// for Tabs'. It takes no keys by itself: typing meant for the other page
 /// stays there, and a prompt's field gets the keys when it is clicked, which
 /// also focuses the page. For its first half second it takes no click, so
 /// one already on its way can't land on OK.

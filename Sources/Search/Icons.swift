@@ -334,7 +334,7 @@ final class Favicons {
     /// the page has just changed its icon (`changed`), which is asked again.
     ///
     /// What the page shows is kept under the look it was asked in: a page
-    /// follows Search's light or dark look, and a site that swaps its icon
+    /// follows Tabs' light or dark look, and a site that swaps its icon
     /// with it from script (GitHub), rather than declaring both, would
     /// otherwise have one look's icon overwrite the other's (#423).
     func fetch(for tab: Tab, changed: Bool = false) {
@@ -627,7 +627,7 @@ struct Mark: View {
     var body: some View {
         Group {
             if let icon, icon.isTemplate {
-                // One of Search's own pages (InternalPages.swift): its symbol,
+                // One of Tabs' own pages (InternalPages.swift): its symbol,
                 // in the row's ink, light or dark.
                 Image(nsImage: icon)
                     .renderingMode(.template)
@@ -705,7 +705,7 @@ final class IconRelay: NSObject, WKScriptMessageHandler {
 /// process of its own, sandboxed, out of this one. A site's SVG is put in
 /// an <img> there (an SVG as an image runs no script and loads nothing),
 /// drawn on a canvas at a tab's size and handed back as a PNG, which only
-/// the PNG decoder here then reads. No SVG parser runs in Search's process.
+/// the PNG decoder here then reads. No SVG parser runs in Tabs' process.
 ///
 /// One small view, not in any window, with a store that keeps nothing and
 /// page scripts off; it is let go after a few seconds without work, and

@@ -72,7 +72,7 @@ struct PasswordsPanel: View {
                         .font(.system(size: 12))
                         .foregroundStyle(Palette.muted)
                 }
-                Text("macOS asks once for that browser's keychain key. Nothing is changed there; everything lands in your own keychain, under Search.")
+                Text("macOS asks once for that browser's keychain key. Nothing is changed there; everything lands in your own keychain, under Tabs.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)

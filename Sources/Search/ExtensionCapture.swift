@@ -11,7 +11,7 @@ import WebKit
 // shows the Mac's own picker, and which it refuses unless the call comes
 // from a click being handled in a page that is on screen. So Search stands
 // in between. An extension's page asks through a channel that knows who is
-// asking; Search asks you, once per extension, whether it may record; brings
+// asking; Tabs asks you, once per extension, whether it may record; brings
 // the page on screen; and calls WebKit's getDisplayMedia in that page itself,
 // which WebKit counts as a click. The Mac's picker follows, every time: it is
 // the Mac, not Search, that asks what to share. The stream stays in the page
@@ -77,7 +77,7 @@ final class ExtensionCapture: NSObject, WKScriptMessageHandlerWithReply, Observa
         let id = context.uniqueIdentifier
         let pressed = Extensions.pressed[id].map { Date().timeIntervalSince($0) < 60 } ?? false
         if ExtensionCapture.allowed(id), pressed || Extensions.justUsed(id) { return true }
-        // Refused once, not asked again until Search starts afresh: an
+        // Refused once, not asked again until Tabs starts afresh: an
         // extension can't wear you down with the question.
         guard !refused.contains(id) else { return false }
         guard await Extensions.shared.ask(capture: context) else {
@@ -197,7 +197,7 @@ final class ExtensionCapture: NSObject, WKScriptMessageHandlerWithReply, Observa
     }
 
     /// The page on screen, then WebKit's getDisplayMedia called in it.
-    /// Pages where Search's own call is under way, and the picker it asks
+    /// Pages where Tabs' own call is under way, and the picker it asks
     /// for (1 a screen, 2 a window): WebKit's question about recording, from
     /// an extension's page, is yes only for these (see ExtensionPageDelegate).
     private var inFlight: [ObjectIdentifier: Int] = [:]
@@ -276,7 +276,7 @@ final class ExtensionCapture: NSObject, WKScriptMessageHandlerWithReply, Observa
     }
 
     /// WebKit won't start a recording in a page that isn't on screen. Brought
-    /// forward only after you said yes or just did something in Search, and
+    /// forward only after you said yes or just did something in Tabs, and
     /// never in a test run.
     private func bringForward(_ web: WKWebView) async {
         guard !Store.testing else { return }
@@ -476,7 +476,7 @@ final class ExtensionCapture: NSObject, WKScriptMessageHandlerWithReply, Observa
 
 /// The delegate of a tab showing one of an extension's pages: WebKit's
 /// question about recording the screen is answered here — yes only while
-/// Search's own call is under way in that page (ExtensionCapture.record),
+/// Tabs' own call is under way in that page (ExtensionCapture.record),
 /// no for anything else, however the extension got hold of getDisplayMedia.
 /// Everything else goes on to the window's delegate, as for any tab. Web
 /// tabs don't have one, and keep WebKit's own way: the Mac's picker.

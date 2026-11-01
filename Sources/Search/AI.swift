@@ -21,7 +21,7 @@ enum AI {
 
 /// Where the answers come from.
 enum AIProvider: String, CaseIterable, Identifiable {
-    /// The model downloaded to this Mac, run by Search's own engine (AIEngine).
+    /// The model downloaded to this Mac, run by Tabs' own engine (AIEngine).
     case thisMac
     case anthropic, openAI, gemini, openRouter
     /// Ollama, on this Mac.
@@ -96,10 +96,10 @@ enum AIProvider: String, CaseIterable, Identifiable {
 
 /// The keys, in the keychain and nowhere else.
 ///
-/// The data protection keychain, under Search's own access group: only apps
-/// signed as Search, with its provisioning profile, can read or write them.
+/// The data protection keychain, under Tabs' own access group: only apps
+/// signed as Tabs, with its provisioning profile, can read or write them.
 /// This Mac only, readable while it is unlocked, never synced, and each kept
-/// for its provider's host (account "provider@host"). A copy of Search built
+/// for its provider's host (account "provider@host"). A copy of Tabs built
 /// without that profile — from source, or for testing — has no access group,
 /// and keeps no key at all rather than one somewhere weaker. Test runs keep
 /// theirs in memory, for the run.
@@ -123,7 +123,7 @@ enum AIKeys {
          kSecAttrAccount as String: account(provider)]
     }
 
-    /// Whether a key can be kept at all by this copy of Search.
+    /// Whether a key can be kept at all by this copy of Tabs.
     static var available: Bool {
         if Store.testing { return true }
         var asked = query(.anthropic)

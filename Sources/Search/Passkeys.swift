@@ -9,7 +9,7 @@ import WebKit
 // field (conditional mediation) has WebKit open an AutoFill operation with
 // macOS's AuthenticationServicesAgent, held for as long as the page waits.
 // If Search dies meanwhile — quit, crash, killed — the agent never lets go of
-// it, and refuses every passkey request Search makes after that, before any
+// it, and refuses every passkey request Tabs makes after that, before any
 // sheet: "Request already in progress for specified application identifier"
 // (AuthenticationServicesCore.AuthorizationError 1). "Authentication failed"
 // on every site, until the agent restarts with the Mac. Found 24 Sep 2026 on
@@ -847,7 +847,7 @@ private struct CBOR {
 /// The page's side: requests handed over, answers handed back.
 final class PasskeyRelay: NSObject, WKScriptMessageHandlerWithReply {
     static let name = "officePasskeys"
-    /// The page's word to Search's side, and the answer back (see `bridge`).
+    /// The page's word to Tabs' side, and the answer back (see `bridge`).
     static let asked = "search-passkeys-ask"
     static let answered = "search-passkeys-answer"
 
@@ -880,15 +880,15 @@ final class PasskeyRelay: NSObject, WKScriptMessageHandlerWithReply {
     /// was set on the old one goes with it.
     ///
     /// It has to be in the page's own world to stand in for the page's
-    /// functions, and nothing of Search's is there for a page to find — no
-    /// window.webkit, no global of its own. Requests go to Search's side as
+    /// functions, and nothing of Tabs' is there for a page to find — no
+    /// window.webkit, no global of its own. Requests go to Tabs' side as
     /// events on the window (see `bridge`).
     static let page = """
     (function () {
       if (!window.PublicKeyCredential || !window.CredentialsContainer) return;
       var proto = CredentialsContainer.prototype;
       // In once, whichever copy comes first — an extension's (see
-      // ExtensionShims.passkeys) or Search's own — and marked on the prototype
+      // ExtensionShims.passkeys) or Tabs' own — and marked on the prototype
       // rather than on the window. The mark holds navigator.credentials too:
       // held, WebKit keeps it, and an extension's own get and create on it
       // with it.
@@ -1162,7 +1162,7 @@ final class PasskeyRelay: NSObject, WKScriptMessageHandlerWithReply {
     })();
     """
 
-    /// Search's side of it, in Search's own world (Web.world), where the
+    /// Tabs' side of it, in Tabs' own world (Web.world), where the
     /// handler is and a page can't look. A request the page dispatches is
     /// handed over as it is — the frame it comes from is WebKit's to say, not
     /// the event's — and the answer dispatched back for the page to pick up.

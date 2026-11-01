@@ -4,7 +4,7 @@ scripts that wait on a top-level await, getPlatformInfo applied to nothing,
 and a port's listener reading what was kept on the port.
 
 Build first (`./build.sh`), then `python3 Tests/extension_module_await.py`.
-It runs a copy of build/Search.app under a bundle id of its own, in a world
+It runs a copy of build/Tabs.app under a bundle id of its own, in a world
 of its own with split_view.py's harness, started hidden; the copy, its
 WebKit folders and the world are removed afterwards.
 
@@ -123,7 +123,7 @@ window.__r = Option_.word;
 
 
 def probe_copy():
-    """build/Search.app (or the app the harness was pointed at) under a
+    """build/Tabs.app (or the app the harness was pointed at) under a
     bundle id of its own, signed ad hoc."""
     app = work / "Search.app"
     shutil.copytree(sv.APP, app, symlinks=True)

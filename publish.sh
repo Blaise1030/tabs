@@ -19,7 +19,7 @@ case "$ARCH" in
   x86_64) FROM="build/intel"; FOLDER="${1%/}/intel" ;;
   *) echo "SEARCH_ARCH is arm64 or x86_64, not “$ARCH”" >&2; exit 1 ;;
 esac
-FILES=(Search.dmg Search.zip appcast.json appcast.json.zip)
+FILES=(Tabs.dmg Tabs.zip appcast.json appcast.json.zip)
 
 for FILE in "${FILES[@]}"; do
   [ -f "$FROM/$FILE" ] || { echo "$FROM/$FILE is missing — ./build.sh release dmg makes it" >&2; exit 1; }
@@ -29,9 +29,9 @@ VERSION="$(tr -d '[:space:]' < VERSION)"
 grep -q "\"version\": \"$VERSION\"" "$FROM/appcast.json" \
   || { echo "$FROM/appcast.json isn't $VERSION — build it again first" >&2; exit 1; }
 CHIP="$(mktemp -d)"
-ditto -x -k "$FROM/Search.zip" "$CHIP"
-[ "$(lipo -archs "$CHIP/Search.app/Contents/MacOS/Search")" = "$ARCH" ] \
-  || { rm -rf "$CHIP"; echo "$FROM/Search.zip doesn't hold a $ARCH app — not publishing" >&2; exit 1; }
+ditto -x -k "$FROM/Tabs.zip" "$CHIP"
+[ "$(lipo -archs "$CHIP/Tabs.app/Contents/MacOS/Tabs")" = "$ARCH" ] \
+  || { rm -rf "$CHIP"; echo "$FROM/Tabs.zip doesn't hold a $ARCH app — not publishing" >&2; exit 1; }
 rm -rf "$CHIP"
 # The signed feed has to hold up before it goes anywhere: builds from 1.0.4
 # read only it, and a broken one would stop every update without a word.
@@ -41,8 +41,8 @@ codesign --verify -R='anchor apple generic and identifier "com.officecommun.sear
   || { rm -rf "$CHECK"; echo "$FROM/appcast.json.zip doesn't verify — not publishing" >&2; exit 1; }
 cmp -s "$CHECK/appcast.json" "$FROM/appcast.json" || { rm -rf "$CHECK"; echo "the signed appcast isn't $FROM/appcast.json — not publishing" >&2; exit 1; }
 rm -rf "$CHECK"
-xcrun stapler validate -q "$FROM/Search.dmg" >/dev/null 2>&1 \
-  || echo "note: $FROM/Search.dmg is not notarised — ./build.sh release ship does that" >&2
+xcrun stapler validate -q "$FROM/Tabs.dmg" >/dev/null 2>&1 \
+  || echo "note: $FROM/Tabs.dmg is not notarised — ./build.sh release ship does that" >&2
 
 mkdir -p "$FOLDER"
 # The AI engine the feed names, when it names one (build.sh, write_engine):

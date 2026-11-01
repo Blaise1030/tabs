@@ -33,7 +33,7 @@ struct ShortcutsPage: View {
                 let commands = found.filter { $0.section == section }
                 if !commands.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Caption(section.rawValue)
+                    Caption(section.title)
                     Card {
                         ForEach(Array(commands.enumerated()), id: \.element.id) { index, command in
                             if index > 0 { Rule() }

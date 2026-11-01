@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 // What another browser exported to a file, brought in: the way in from a
-// browser Search can't read directly, from another Mac, or from Safari,
+// browser Tabs can't read directly, from another Mac, or from Safari,
 // whose own files macOS keeps from other apps.
 //
 // One chooser takes all of it. A bookmarks page (.html), a passwords file
@@ -14,7 +14,7 @@ import Darwin
 enum ImportFile {
     /// A folder of its own for what an import unpacks or copies (a Safari
     /// export's Passwords.csv in the clear, another browser's databases),
-    /// named for this process so another copy of Search running beside it
+    /// named for this process so another copy of Tabs running beside it
     /// never takes it for a leftover.
     nonisolated static func scratchFolder() -> URL {
         FileManager.default.temporaryDirectory

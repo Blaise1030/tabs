@@ -1,18 +1,18 @@
 import SwiftUI
 
 // A small window for a link from another app: the page, and a thin line over
-// it with the site, Open in Search and nothing else — to read and close, or
-// to keep. Arc calls it Little Arc; the idea came to Search as #227.
+// it with the site, Open in Tabs and nothing else — to read and close, or
+// to keep. Arc calls it Little Arc; the idea came to Tabs as #227.
 //
 // Off unless asked for, in Settings › General: a link from Mail opens in the
 // browser's window, as it always has, for anyone who hasn't chosen this.
 //
 // The page is a tab of its own, as a peek is (see Peek.swift), only in a
-// window of its own: Open in Search moves it into the browser's row, where
+// window of its own: Open in Tabs moves it into the browser's row, where
 // the space on screen is, loaded as it is and nothing loaded twice.
 //
 // It comes alone. The browser's window stays where it was — closed, in the
-// Dock, behind another app — until Open in Search asks for it (see
+// Dock, behind another app — until Open in Tabs asks for it (see
 // Links.little).
 
 @MainActor
@@ -95,7 +95,7 @@ final class LittleWindow: NSObject, NSWindowDelegate {
     static let switcher = TabSwitcher()
 
     /// The browser whose tabs are the planet for this gesture: the window
-    /// in front, as Open in Search takes.
+    /// in front, as Open in Tabs takes.
     private(set) static weak var planet: Browser?
 
     /// The last one brought forward on a test run, which never puts one
@@ -333,7 +333,7 @@ final class LittleWindow: NSObject, NSWindowDelegate {
     }
 }
 
-/// The page, and the line over it: the site, and Open in Search when there
+/// The page, and the line over it: the site, and Open in Tabs when there
 /// is somewhere to keep it (an extension's popup window has no such button).
 struct LittleView: View {
     @ObservedObject var tab: Tab
@@ -356,8 +356,8 @@ struct LittleView: View {
                     .truncationMode(.head)
                 Spacer(minLength: 0)
                 if let keep {
-                    Pill("Open in Search", action: keep)
-                        .help("Open in Search   ⌘O")
+                    Pill("Open in Tabs", action: keep)
+                        .help("Open in Tabs   ⌘O")
                 } else {
                     Spacer().frame(width: 64)
                 }

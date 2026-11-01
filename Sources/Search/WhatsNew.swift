@@ -50,7 +50,7 @@ enum WhatsNew {
                since: "1.0.6", get: { $0.engineSuggests }, set: { $0.engineSuggests = $1 }),
         Toggle(title: "Pins keep their site", detail: "Links elsewhere open in a peek, and ⌘W takes a pin back to its page, as in Arc.",
                since: "1.0.6", get: { $0.pinsKeepSite }, set: { $0.pinsKeepSite = $1 }),
-        Toggle(title: "Darken light pages", detail: "While Search is dark, pages with no dark look of their own are darkened.",
+        Toggle(title: "Darken light pages", detail: "While Tabs is dark, pages with no dark look of their own are darkened.",
                since: "1.0.6", get: { $0.darkensPages }, set: { $0.darkensPages = $1 }),
         Toggle(title: "Roomier tabs", detail: "Taller rows and larger titles in the sidebar.",
                since: "1.0.6", get: { $0.roomyTabs }, set: { $0.roomyTabs = $1 }),
@@ -189,7 +189,7 @@ enum WhatsNew {
                 "Leaving a video's full screen happens in one move.",
                 "Pins in spaces you aren't in sleep and give their memory back.",
                 "A bookmark opens in a tab of its own, never in a pin's place.",
-                "Claude in Chrome signs in, and signs in again quietly each time Search starts.",
+                "Claude in Chrome signs in, and signs in again quietly each time Tabs starts.",
                 "Stylus and Vimium C work.",
             ],
             fixed: [
@@ -220,11 +220,11 @@ enum WhatsNew {
                 "Find says “3 of 17”, paints every match, and can match case or whole words.",
                 "Downloads pause and resume.",
                 "Open Link in New Tab leaves you where you are; hold ⌥ to go to it.",
-                "Search can start with a fresh window: your pinned tabs, tab groups and named tabs, and none of last time's others.",
+                "Tabs can start with a fresh window: your pinned tabs, tab groups and named tabs, and none of last time's others.",
                 "Intel Macs get a download of their own.",
             ],
             better: [
-                "Search is built for size, so all of this fits in 6.8 MB, and pages that change all the time, like a chat writing its answer, stay quick.",
+                "Tabs is built for size, so all of this fits in 6.8 MB, and pages that change all the time, like a chat writing its answer, stay quick.",
                 "An extension's popup window opens as a small window, as in Chrome: a password manager's vault, a sign-in.",
                 "Esc closes a new tab you haven't used, and words typed into a new tab wait for you.",
                 "Tampermonkey installs scripts from a link, and SingleFile saves pages again.",
@@ -271,7 +271,7 @@ enum WhatsNew {
                 "Scrolling asks far less of the window, and a tab still loading no longer keeps the Mac busy.",
                 "Where links go, peeking at a link with a shift-click, and flicking the floating video to a corner are now on.",
                 "Tab managers and other extensions see every tab, in every window.",
-                "Window › Move & Resize and the Mac's tiling work with Search's window.",
+                "Window › Move & Resize and the Mac's tiling work with Tabs' window.",
                 "⌘K always opens the list of your tabs, whatever the page.",
             ],
             fixed: [
@@ -308,13 +308,13 @@ enum WhatsNew {
             headline: "Passkeys, password managers and Google.",
             new: [
                 "A site's passkey button brings up the Mac's own passkey sheet: Touch ID, your iPhone, a security key.",
-                "Search can be the Mac's default browser.",
+                "Tabs can be the Mac's default browser.",
                 "Each off until you turn it on in Settings: a bookmarks bar, a peek at a link with a shift-click, the video that follows you to another app, pages at 120 Hz, and where a link goes.",
                 "Mute a tab, share a page, copy a link as Markdown, the mouse's back and forward buttons, and spaces in the bar across the top.",
             ],
             better: [
                 "Faster to open, and new tabs in about 10 ms.",
-                "Pages see nothing of Search that Safari doesn't show them, and a saved password is offered only on its own site.",
+                "Pages see nothing of Tabs that Safari doesn't show them, and a saved password is offered only on its own site.",
             ],
             fixed: [
                 "1Password, Bitwarden and Proton Pass.",
@@ -367,7 +367,7 @@ struct WhatsNewCard: View {
     private var fresh: [WhatsNew.Toggle] { WhatsNew.toggles.filter { $0.since == release.version } }
 
     var body: some View {
-        Plate("New in Search \(release.version)", width: 460, close: close) {
+        Plate("New in Tabs \(release.version)", width: 460, close: close) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     rows(fresh)
@@ -445,7 +445,7 @@ struct ReleaseNotesPanel: View {
     private func version(_ note: WhatsNew.Notes) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Search \(note.version)")
+                Text("Tabs \(note.version)")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Palette.ink)
                 if !note.date.isEmpty {

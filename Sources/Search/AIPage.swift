@@ -3,7 +3,7 @@ import WebKit
 
 // What of a page goes to the model, and how it is framed.
 //
-// The page's words, read in Search's own world where the page's scripts
+// The page's words, read in Tabs' own world where the page's scripts
 // can't reach (Web.world), and only the ones a person reading could see:
 // nothing hidden, transparent, tiny, off to the side or marked for screen
 // readers alone — the usual places for words meant for a model rather than

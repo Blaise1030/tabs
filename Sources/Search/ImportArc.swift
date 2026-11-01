@@ -197,7 +197,7 @@ enum Arc {
 
     // MARK: - the space's picture
 
-    /// Arc's emoji as the nearest of Search's space pictures (Spaces.icons),
+    /// Arc's emoji as the nearest of Tabs' space pictures (Spaces.icons),
     /// then the space's name, then a briefcase. The one table for both.
     static func symbol(emoji: String?, name: String) -> String {
         if let emoji {

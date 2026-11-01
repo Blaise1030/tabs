@@ -1,0 +1,670 @@
+import SwiftUI
+
+// A terminal tab's project, down the side: the tree the daemon builds from
+// the session's own folder (see Tabsh.tree), with a field that filters it.
+// A folder row folds and unfolds; a file row opens in an editor tab. The
+// sidebar is part of the terminal's tab, so close or restore brings the
+// explorer back with the same session, rooted where the daemon last had it.
+//
+// The agent's tab wears the same column: see TabshProjectPane, which both
+// panes share so the tree, its width and its edge behave identically.
+//
+// The tree follows the session: it is read once, then kept live from the
+// daemon's watch socket (Tabsh.filesWatchRequest) — files that appear or go
+// are patched in, and when the session's folder moves to another project the
+// listing is read again at the new root. That is what makes the sidebar
+// follow a `cd` in the shell, or whatever folder the agent has moved to.
+struct TabshTerminalPane: View {
+    let sessionID: String
+    @ObservedObject var browser: Browser
+    @State private var showingExplorer = true
+    @Environment(\.colorScheme) private var scheme
+
+    private var dark: Bool { browser.chromeTheme?.dark ?? (scheme == .dark) }
+    private var tint: NSColor? { browser.chromeTheme?.color }
+    /// The ground under both halves, so the explorer is part of the
+    /// terminal rather than a panel of its own (see TabshTerminalTheme).
+    private var ground: Color {
+        if let tint { return Color(nsColor: tint) }
+        return Color(nsColor: TabshTerminalTheme.background(dark: dark))
+    }
+
+    var body: some View {
+        TabshProjectPane(sessionID: sessionID,
+                         browser: browser,
+                         ground: ground,
+                         showingExplorer: $showingExplorer) {
+            TabshTerminalView(sessionID: sessionID, browser: browser)
+                // Air around the shell: text that touches the tab's edges
+                // reads as clipped rather than as a terminal. No rounding on
+                // the shell itself (see TabshTerminalView): the padding is
+                // the only frame it needs.
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .overlay(alignment: .topTrailing) {
+                    if !showingExplorer {
+                        ExplorerShowButton(ground: ground) { showingExplorer = true }
+                    }
+                }
+        }
+    }
+}
+
+/// A tab's project column, shared by the terminal and the agent chat: the
+/// caller's content on the left, the explorer on the right, and the drag
+/// edge between them. It is the same tree either way — the session's folder —
+/// so a file opens the same way from a shell or from a conversation.
+struct TabshProjectPane<Content: View>: View {
+    let sessionID: String
+    @ObservedObject var browser: Browser
+    /// The ground under both halves (the terminal's, or the chat's).
+    let ground: Color
+    @Binding var showingExplorer: Bool
+    @ViewBuilder let content: Content
+
+    @AppStorage("tabsh.explorerWidth") private var explorerWidth: Double = 200
+
+    var body: some View {
+        HStack(spacing: 0) {
+            content
+            if showingExplorer {
+                explorerDivider
+                    .zIndex(1)
+                TabshExplorer(sessionID: sessionID, browser: browser,
+                              close: { showingExplorer = false })
+                    .frame(width: explorerWidth)
+                    .background(ground)
+                    .zIndex(0)
+            }
+        }
+        .background(ground)
+        .clipped()
+    }
+
+    /// The explorer's edge: a hairline to see, nine points to take hold of.
+    /// AppKit owns the drag: a SwiftUI gesture here lost the pointer to the
+    /// split stage the tab sits in (the pane divider answered instead).
+    private var explorerDivider: some View {
+        ExplorerEdge(width: $explorerWidth)
+            .frame(width: 9)
+    }
+}
+
+/// The button that brings the explorer back once it is hidden: floats over
+/// the terminal's top corner, and sits at the end of the agent's header.
+struct ExplorerShowButton: View {
+    /// Painted behind the floating form so the shell's text does not read
+    /// through it. Nil leaves it bare, as in a header.
+    var ground: Color? = nil
+    let show: () -> Void
+
+    var body: some View {
+        Button(action: show) {
+            Image(systemName: "sidebar.right")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Palette.muted)
+                .frame(width: 24, height: 24)
+                .background {
+                    if let ground {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(ground.opacity(0.85))
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Show the project")
+        .padding(ground == nil ? 0 : 8)
+    }
+}
+
+private struct TabshExplorer: View {
+    let sessionID: String
+    @ObservedObject var browser: Browser
+    let close: () -> Void
+
+    @State private var root = ""
+    @State private var paths: [String] = []
+    @State private var truncated = false
+    @State private var foldersOnly = false
+    @State private var loading = true
+    @State private var failure: String?
+    @State private var search = ""
+    @State private var expanded: Set<String> = []
+    @State private var hovered: String?
+
+    /// What this session's tree had open, kept per session so switching a
+    /// tab or relaunching the browser comes back to the same folders.
+    private var expandedKey: String { "tabsh.explorer.expanded.\(sessionID)" }
+
+    private var rootName: String {
+        root.trimmingCharacters(in: CharacterSet(charactersIn: "/")).split(separator: "/").last.map(String.init) ?? "/"
+    }
+
+    private var dirs: Set<String> {
+        Set(paths.filter { $0.hasSuffix("/") }.map { String($0.dropLast()) })
+    }
+
+    private var tree: [Node] { build() }
+
+    private var matches: [Node] {
+        let needle = search.trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty else { return [] }
+        return paths
+            .filter { relative in
+                let name = relative.hasSuffix("/") ? String(relative.dropLast()) : relative
+                return name.split(separator: "/").last
+                    .map { $0.localizedCaseInsensitiveContains(needle) } ?? false
+            }
+            .sorted()
+            .map { relative in
+                let clean = relative.hasSuffix("/") ? String(relative.dropLast()) : relative
+                return Node(path: clean,
+                            name: clean.split(separator: "/").last.map(String.init) ?? clean,
+                            isDir: relative.hasSuffix("/"))
+            }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Palette.faint)
+                Text(rootName)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Palette.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(root)
+                Spacer(minLength: 0)
+                Button(action: close) {
+                    Image(systemName: "sidebar.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Palette.muted)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Hide the project")
+            }
+            HStack(spacing: 5) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Palette.muted)
+                TextField("Search…", text: $search)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11.5))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Palette.hover)
+            )
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .task(id: sessionID) {
+            restoreFolders()
+            await load()
+            // Read once above, then kept in step with the daemon until the
+            // tab (or the column) goes away.
+            await follow()
+        }
+        .onChange(of: expanded) { _, open in
+            UserDefaults.standard.set(Array(open), forKey: expandedKey)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if loading {
+            ProgressView().controlSize(.small).frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, 12)
+        } else if let failure {
+            Text(failure)
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.muted)
+                .padding(.top, 8)
+        } else if truncated && (!foldersOnly || paths.isEmpty) {
+            Text("Too many files here to list.")
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.muted)
+                .padding(.top, 8)
+        } else if paths.isEmpty {
+            Text("Nothing here.")
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.muted)
+                .padding(.top, 8)
+        } else if !search.trimmingCharacters(in: .whitespaces).isEmpty {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    if matches.isEmpty {
+                        Text("No matches.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Palette.muted)
+                            .padding(.top, 8)
+                    }
+                    ForEach(matches) { node in
+                        FileRow(node: node, depth: 0, showsPath: true, expanded: false,
+                                base: root, hovered: hovered == node.path,
+                                onHover: { hover($0, node) },
+                                onTap: { tapped(node, inSearch: true) })
+                    }
+                }
+            }
+            .scrollIndicators(.never)
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(tree) { node in
+                        TreeRows(node: node, depth: 0, base: root,
+                                 expanded: $expanded, hovered: $hovered, open: open)
+                    }
+                }
+            }
+            .scrollIndicators(.never)
+        }
+    }
+
+    private func hover(_ over: Bool, _ node: Node) {
+        if over { hovered = node.path }
+        else if hovered == node.path { hovered = nil }
+    }
+
+    private func tapped(_ node: Node, inSearch: Bool) {
+        if node.isDir {
+            guard inSearch else { return }
+            // A folder found by search: clear the field and open its way in
+            // the tree, so it is where it belongs rather than alone in a list.
+            var walked = ""
+            for part in node.path.split(separator: "/") {
+                walked += walked.isEmpty ? String(part) : "/" + part
+                expanded.insert(walked)
+            }
+            search = ""
+        } else {
+            open(node)
+        }
+    }
+
+    private func open(_ node: Node) {
+        // Pictures and Markdown open as documents; everything else as text.
+        let type = (node.name as NSString).pathExtension.lowercased()
+        let preview = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tif", "tiff", "heic", "md", "markdown", "mdown", "mkd"]
+        browser.showBeside(InternalPage(preview.contains(type) ? .preview : .editor, absolute(node.path)),
+                           of: browser.active)
+    }
+
+    private func absolute(_ path: String) -> String {
+        let base = root.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return base.isEmpty ? "/" + path : "/" + base + "/" + path
+    }
+
+    private func restoreFolders() {
+        expanded = Set(UserDefaults.standard.stringArray(forKey: expandedKey) ?? [])
+    }
+
+    private func load(quiet: Bool = false) async {
+        if !quiet { loading = true }
+        failure = nil
+        do {
+            let tree = try await Tabsh.tree(session: sessionID)
+            root = tree.root
+            paths = tree.paths
+            truncated = tree.truncated
+            foldersOnly = tree.foldersOnly
+            loading = false
+        } catch {
+            failure = error.localizedDescription
+            loading = false
+        }
+    }
+
+    // MARK: - Following the session
+
+    /// The daemon's watch socket, read until the tab goes away. It follows
+    /// the session's own folder, so a `cd` into another project roots the
+    /// tree there; and it names the files that appeared or went, so the tree
+    /// tracks the agent's work without asking for the whole listing again.
+    private func follow() async {
+        var retrying = false
+        while !Task.isCancelled {
+            if retrying {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                // Whatever happened while the socket was down was missed:
+                // read the listing once before listening again.
+                await load(quiet: true)
+            }
+            retrying = true
+            guard let request = Tabsh.filesWatchRequest(for: sessionID) else { return }
+            let socket = URLSession.shared.webSocketTask(with: request)
+            socket.resume()
+            do {
+                try await withTaskCancellationHandler {
+                    while !Task.isCancelled {
+                        let message = try await socket.receive()
+                        await apply(message)
+                    }
+                } onCancel: {
+                    socket.cancel(with: .goingAway, reason: nil)
+                }
+            } catch {
+                // The daemon restarted, or the Mac slept: reconnect below.
+            }
+            socket.cancel(with: .goingAway, reason: nil)
+            if Task.isCancelled { return }
+        }
+    }
+
+    /// One watch message: a new root, a request to read the tree again, or
+    /// the paths that went and came.
+    private func apply(_ message: URLSessionWebSocketTask.Message) async {
+        let data: Data
+        switch message {
+        case let .data(bytes): data = bytes
+        case let .string(text): data = Data(text.utf8)
+        @unknown default: return
+        }
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+        if let moved = object["root"] as? String, !moved.isEmpty {
+            // The session's folder is in another project now: the paths we
+            // hold are relative to the old root and mean nothing here.
+            await load(quiet: true)
+        } else if object["reset"] as? Bool == true {
+            await load(quiet: true)
+        } else {
+            await patch(add: object["add"] as? [String] ?? [],
+                        remove: object["remove"] as? [String] ?? [])
+        }
+    }
+
+    /// Applies the watch's changes to the listing in place. A truncated tree
+    /// is a summary (folders only, or past the limit), so any change there
+    /// means reading it again rather than guessing what it holds now.
+    private func patch(add: [String], remove: [String]) async {
+        guard !add.isEmpty || !remove.isEmpty else { return }
+        guard !truncated else {
+            await load(quiet: true)
+            return
+        }
+        paths = TabshTreePaths.applying(add: add, remove: remove, to: paths)
+    }
+
+    // MARK: - The tree
+
+    private func build() -> [Node] {
+        let folders = dirs
+        var byParent: [String: [String]] = [:]
+        for path in paths {
+            let isDir = path.hasSuffix("/")
+            let clean = isDir ? String(path.dropLast()) : path
+            guard !clean.isEmpty else { continue }
+            let parent = clean.contains("/") ? String(clean[..<clean.lastIndex(of: "/")!]) : ""
+            byParent[parent, default: []].append(clean)
+        }
+        func make(_ path: String) -> Node {
+            let isDir = folders.contains(path)
+            let children = (byParent[path] ?? [])
+                .sorted { a, b in
+                    let da = folders.contains(a), db = folders.contains(b)
+                    if da != db { return da }
+                    return a.localizedStandardCompare(b) == .orderedAscending
+                }
+                .map { make($0) }
+            return Node(path: path,
+                        name: path.split(separator: "/").last.map(String.init) ?? path,
+                        isDir: isDir, children: children)
+        }
+        return (byParent[""] ?? [])
+            .sorted { a, b in
+                let da = folders.contains(a), db = folders.contains(b)
+                if da != db { return da }
+                return a.localizedStandardCompare(b) == .orderedAscending
+            }
+            .map { make($0) }
+    }
+}
+
+// MARK: - The watch's changes
+
+/// What a watch message leaves of a listing: the paths that came, without
+/// the ones that went. A removed directory takes everything under it with
+/// it, and the watch names it without the trailing slash a directory path
+/// carries in the listing.
+enum TabshTreePaths {
+    static func applying(add: [String], remove: [String], to paths: [String]) -> [String] {
+        var set = Set(paths)
+        for gone in remove {
+            set.remove(gone)
+            set.remove(gone + "/")
+            let under = gone + "/"
+            set = set.filter { !$0.hasPrefix(under) }
+        }
+        set.formUnion(add)
+        return set.sorted()
+    }
+}
+
+// MARK: - Rows
+
+private struct Node: Identifiable {
+    let path: String
+    let name: String
+    let isDir: Bool
+    var children: [Node] = []
+
+    var id: String { path }
+}
+
+/// One node and, while it is unfolded, its children after it.
+private struct TreeRows: View {
+    let node: Node
+    let depth: Int
+    let base: String
+    @Binding var expanded: Set<String>
+    @Binding var hovered: String?
+    let open: (Node) -> Void
+
+    var body: some View {
+        let isOpen = expanded.contains(node.path)
+        FileRow(node: node, depth: depth, showsPath: false, expanded: isOpen,
+                base: base, hovered: hovered == node.path,
+                onHover: { over in
+                    if over { hovered = node.path }
+                    else if hovered == node.path { hovered = nil }
+                },
+                onTap: {
+                    if node.isDir {
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            if isOpen { expanded.remove(node.path) } else { expanded.insert(node.path) }
+                        }
+                    } else {
+                        open(node)
+                    }
+                })
+        if node.isDir, isOpen {
+            ForEach(node.children) { child in
+                TreeRows(node: child, depth: depth + 1, base: base, expanded: $expanded, hovered: $hovered, open: open)
+            }
+        }
+    }
+}
+
+private struct FileRow: View {
+    let node: Node
+    let depth: Int
+    let showsPath: Bool
+    let expanded: Bool
+    let base: String
+    let hovered: Bool
+    let onHover: (Bool) -> Void
+    let onTap: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if node.isDir {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Palette.faint)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                    .frame(width: 9)
+            } else {
+                Color.clear.frame(width: 9)
+            }
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .frame(width: 14)
+                .foregroundStyle(node.isDir ? Palette.muted : Palette.faint)
+            Text(showsPath ? node.path : node.name)
+                .font(.system(size: 11.5))
+                .foregroundStyle(node.isDir ? Palette.muted : Palette.ink)
+                .lineLimit(1)
+                .truncationMode(showsPath ? .head : .middle)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 3)
+        // Edge to edge inside the panel, a step per level: the rows line up
+        // with the search field above them, and the hover pill spans the
+        // column rather than floating inside it.
+        .padding(.leading, CGFloat(depth) * 12)
+        .padding(.trailing, 0)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(hovered ? Palette.hover : .clear)
+        )
+        .contentShape(Rectangle())
+        .onHover(perform: onHover)
+        .onTapGesture(perform: onTap)
+        .contextMenu {
+            if !node.isDir {
+                Button("Open") { onTap() }
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: absolute)])
+                }
+                Divider()
+            }
+            Button("Copy Path") { copy(absolute) }
+        }
+    }
+
+    private var icon: String {
+        if node.isDir { return "folder" }
+        switch (node.name as NSString).pathExtension.lowercased() {
+        case "md", "markdown": return "text.document"
+        case "swift": return "swift"
+        case "rs": return "gearshape.2"
+        case "json", "toml", "yaml", "yml": return "curlybraces"
+        case "png", "jpg", "jpeg", "gif", "svg", "webp": return "photo"
+        default: return "doc.text"
+        }
+    }
+
+    private var absolute: String {
+        let trimmed = base.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return trimmed.isEmpty ? "/" + node.path : "/" + trimmed + "/" + node.path
+    }
+
+    private func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
+
+/// The explorer's edge in AppKit: the same little capsule the browser's tab
+/// column shows when the pointer is on its edge (see EdgeGrip in Design.swift),
+/// with a hairline to say where the column ends. It owns the drag itself — a
+/// SwiftUI gesture here lost the pointer to the split stage — and works in
+/// absolute positions, so dragging right always widens.
+private struct ExplorerEdge: NSViewRepresentable {
+    @Binding var width: Double
+
+    func makeNSView(context: Context) -> EdgeView {
+        let view = EdgeView()
+        view.currentWidth = { CGFloat(width) }
+        view.onResize = { wanted in
+            width = min(480, max(140, Double(wanted)))
+        }
+        return view
+    }
+
+    func updateNSView(_ view: EdgeView, context: Context) {
+        view.currentWidth = { CGFloat(width) }
+        view.onResize = { wanted in
+            width = min(480, max(140, Double(wanted)))
+        }
+    }
+
+    final class EdgeView: NSView {
+        var currentWidth: () -> CGFloat = { 236 }
+        var onResize: ((CGFloat) -> Void)?
+
+        private var hovering = false
+        private var dragging = false
+        private var startWidth: CGFloat = 0
+        private var startX: CGFloat = 0
+        private var tracking: NSTrackingArea?
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let tracking { removeTrackingArea(tracking) }
+            let area = NSTrackingArea(rect: bounds,
+                                      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                      owner: self, userInfo: nil)
+            addTrackingArea(area)
+            tracking = area
+        }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeLeftRight)
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            hovering = true
+            needsDisplay = true
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            hovering = false
+            needsDisplay = true
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            dragging = true
+            startWidth = currentWidth()
+            startX = event.locationInWindow.x
+            needsDisplay = true
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            onResize?(startWidth - (event.locationInWindow.x - startX))
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            dragging = false
+            needsDisplay = true
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            super.draw(dirtyRect)
+            // No line down the edge: the explorer and the terminal are one
+            // ground now, and the pill alone says where the edge is.
+            //
+            // The pill: faint at rest, longer and brighter under the hand,
+            // exactly as the tab column's edge behaves.
+            let lit = hovering || dragging
+            let height: CGFloat = lit ? 40 : 28
+            let pill = NSRect(x: bounds.midX - 2, y: bounds.midY - height / 2, width: 4, height: height)
+            (lit ? Palette.NS.muted : Palette.NS.faint).setFill()
+            NSBezierPath(roundedRect: pill, xRadius: 2, yRadius: 2).fill()
+        }
+    }
+}

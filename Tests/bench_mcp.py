@@ -256,7 +256,7 @@ def raw(world, request):
 def start(world):
     for key in ("bench", "welcomed"):
         subprocess.run(["defaults", "write", f"com.officecommun.search.test.{world}", key, "-bool", "true"], check=True)
-    subprocess.run(["open", "-n", "-g", "-j", "--env", f"SEARCH_PROBE={world}", str(ROOT / "build/Search.app")], check=True)
+    subprocess.run(["open", "-n", "-g", "-j", "--env", f"SEARCH_PROBE={world}", str(ROOT / "build/Tabs.app")], check=True)
     for _ in range(300):
         try:
             if "tabs" in raw(world, {"do": "tabs"}):

@@ -67,6 +67,8 @@ final class Browser: NSObject, ObservableObject {
                 DispatchQueue.main.async { held.forEach { $0.present() } }
             }
             guard oldValue != activeID else { return }
+            // The page coming in front brings its own ground and palette.
+            syncChromeTheme()
             // Going to another tab ends a page's run of links (see placeForLink).
             linkRun = nil
             if displayTab?.id == oldValue { cancelDisplay() }
@@ -109,7 +111,17 @@ final class Browser: NSObject, ObservableObject {
         return splits.first { $0.contains(activeID) }
     }
 
-    /// The pair a tab is in, while Split View is on. Turned off, pairs are
+    /// The active page's own ground and light-or-dark face, when it has said
+    /// (see ChromeTheme.swift). The window's ground and palette follow it.
+    @Published private(set) var chromeTheme: ChromeTheme?
+
+    /// The chrome follows Settings › Appearance (Light, Dark, or the Mac's),
+    /// and nothing else. Pages used to be able to re-skin the window and the
+    /// column with their own colours; that is gone, so one dark site no
+    /// longer keeps the whole browser dark.
+    func syncChromeTheme() {
+        if chromeTheme != nil { chromeTheme = nil }
+    }    /// The pair a tab is in, while Split View is on. Turned off, pairs are
     /// kept, as groups are, and nothing acts on them until it is back on.
     func split(for tab: Tab) -> TabSplit? {
         guard prefs.splitView else { return nil }
@@ -735,7 +747,7 @@ final class Browser: NSObject, ObservableObject {
         var appleHost: String?
         /// Apple Passwords is on but not paired: a row to connect.
         var appleConnect = false
-        /// Apple Passwords is off and Search keeps nothing for this site: a
+        /// Apple Passwords is off and Tabs keeps nothing for this site: a
         /// quiet row at the bottom offers it, once (ApplePasswordsOffer). The
         /// site it is counted against.
         var appleOffer: String?
@@ -854,7 +866,7 @@ final class Browser: NSObject, ObservableObject {
             ? ApplePasswords.offers(on: tab.pageAddress, privateTab: tab.shy) : nil
         let apple = applePasswords
         let connect = appleHost != nil && apple.state == .idle && applePairing?.tab != tab.id
-        // Off, and nothing of Search's own for this site: the offer, once.
+        // Off, and nothing of Tabs' own for this site: the offer, once.
         // The row already up under this box stays up while it is there.
         let offer: String? = {
             if let up = suggesting, up.tab == tab.id, let site = up.appleOffer, site == Vault.registrable(host) { return site }
@@ -960,7 +972,7 @@ final class Browser: NSObject, ObservableObject {
     }
 
     /// The row that connects Apple Passwords: the pairing starts, and the
-    /// code is typed into a small card of Search's own where the list was,
+    /// code is typed into a small card of Tabs' own where the list was,
     /// not in Settings. Once paired, the caret goes back to the box and the
     /// accounts come up under it.
     func connectApplePasswords() {
@@ -1161,7 +1173,7 @@ final class Browser: NSObject, ObservableObject {
         let many = count == 1 ? "1 password" : "\(count) passwords"
         Ask.sure(
             count == 1 ? "Remove 1 Password?" : "Remove \(count) Passwords?",
-            detail: "They're taken out of your keychain. Only the passwords Search keeps are removed: password managers, other apps and other browsers keep theirs. This can't be undone.",
+            detail: "They're taken out of your keychain. Only the passwords Tabs keeps are removed: password managers, other apps and other browsers keep theirs. This can't be undone.",
             confirm: "Remove",
             returnCancels: true
         ) { [weak self] in
@@ -2077,7 +2089,7 @@ final class Browser: NSObject, ObservableObject {
     var inScene = false
     /// Its window, once it has one.
     weak var window: NSWindow? {
-        didSet { if window != nil { shut = false } }
+        didSet { if window != nil { shut = false; syncChromeTheme() } }
     }
     /// Its window closed and kept: the last one, closed with the app running.
     /// Its tabs sleep meanwhile (see sleepShut); back, the ones it shows wake.
@@ -2574,7 +2586,7 @@ final class Browser: NSObject, ObservableObject {
 
     private func relook() {
         Favicons.shared.relook(tabs.filter { !$0.asleep })
-        // Dark pages are only ever put into a page while Search is dark: a
+        // Dark pages are only ever put into a page while Tabs is dark: a
         // change of look takes them in, or lets them go.
         redusk()
     }
@@ -2738,7 +2750,7 @@ final class Browser: NSObject, ObservableObject {
         // Every address this brings in, for its icon below.
         var brought: [URL] = []
         var targets: [(id: UUID, space: ArcSidebar.Space?, profile: UUID)] = []
-        // Arc's profiles become Search's (see Profiles.swift): its first,
+        // Arc's profiles become Tabs' (see Profiles.swift): its first,
         // "Default", is this window's; each other one a profile of the same
         // name, made if there is none, with its spaces in it, signed in
         // with that profile's own cookies.
@@ -3109,7 +3121,7 @@ final class Browser: NSObject, ObservableObject {
     }
 
     /// Whether a tab goes into the session: not a private one or the
-    /// bench's, and only a web page, local file or one of Search's own pages.
+    /// bench's, and only a web page, local file or one of Tabs' own pages.
     /// A sleeping view is blank, so `pending` must win or its page disappears.
     private func kept(_ tab: Tab) -> Bool {
         // A tab holding an extension's sign-in answer (Tab.hold) carries its
@@ -3661,6 +3673,12 @@ final class Browser: NSObject, ObservableObject {
     /// behind; closing that blank tab closes the window.
     func close(_ tab: Tab) {
         guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+        // A tabsh tab closed: the socket goes, the shell or agent on the
+        // daemon stays (see TabshTerminal and TabshAgent).
+        if let page = tab.page, let id = page.detail {
+            if page.kind == .tabsh { TabshTerminals.shared.close(id) }
+            if page.kind == .agent { TabshChats.shared.close(id) }
+        }
         let pair = split(for: tab)
         let partner = pair.flatMap { pair in tabs.first { $0.id == pair.partner(of: tab.id) } }
         detachSplit(tab)
@@ -4676,7 +4694,7 @@ final class Browser: NSObject, ObservableObject {
             select(entry(tab))
         } else {
             // A moon: its small window comes forward, and the row stays as
-            // it was. Open in Search is still what moves it in.
+            // it was. Open in Tabs is still what moves it in.
             LittleWindow.holding(target)?.front()
         }
     }
@@ -4711,7 +4729,7 @@ final class Browser: NSObject, ObservableObject {
         if websitePopup {
             return tabDestination.open(url, foreground: foreground, atEnd: atEnd, from: source ?? active, mayWait: mayWait, link: link)
         }
-        // One of Search's own pages, from a link, a script or another app:
+        // One of Tabs' own pages, from a link, a script or another app:
         // its own tab, one of each (see InternalPages.swift).
         if let own = InternalPage(url: url) { return show(own) }
         // An extension's own page is served only to a view built from that
@@ -4996,7 +5014,7 @@ final class Browser: NSObject, ObservableObject {
     }
 
     /// File › Save Page As…: the page with its pictures and styles in one
-    /// web archive, as Safari's Save As makes it. It opens again in Search
+    /// web archive, as Safari's Save As makes it. It opens again in Tabs
     /// or Safari, offline too.
     func savePage() {
         askWhereToSave(active, as: .webArchive, ending: "webarchive") { [weak self] tab, file in
@@ -5289,7 +5307,7 @@ final class Browser: NSObject, ObservableObject {
 
     /// The tab whose video Search last sent to macOS's picture in picture
     /// (Settings › General › The floating video), to bring back when you
-    /// return to it, as Search's own window lands.
+    /// return to it, as Tabs' own window lands.
     private(set) var pictured: Tab.ID?
 
     /// The video playing in `tab` into picture in picture (NativePiP).
@@ -5329,7 +5347,7 @@ final class Browser: NSObject, ObservableObject {
     /// video. WebKit puts it back into its page only once that page is seen,
     /// and the page is most often a tab behind another one, or behind another
     /// app: until someone shows it, the button did nothing. Its tab comes to
-    /// the front, in its window, with Search, and the tab you were on keeps
+    /// the front, in its window, with Tabs, and the tab you were on keeps
     /// its own video where it is rather than taking the window's place.
     @objc(_webViewFullscreenMayReturnToInline:)
     func webViewFullscreenMayReturnToInline(_ webView: WKWebView) {
@@ -5495,6 +5513,10 @@ final class Browser: NSObject, ObservableObject {
         tab.onLink = { [weak self] tab, address in
             guard let self, prefs.showsLinks, visibleTabIDs.contains(tab.id) else { return }
             linkStatus.show(address, over: tab.built)
+        }
+        tab.onChromeTheme = { [weak self] tab in
+            guard let self, tab.id == activeID else { return }
+            syncChromeTheme()
         }
         tab.onPick = { [weak self] tab, selector, label, note in
             guard let self, let host = curtain.host(of: tab.address) else { return }
@@ -6514,7 +6536,7 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         return tab.web
     }
 
-    /// A link clicked open in a tab by Search itself (⌘-click, the middle
+    /// A link clicked open in a tab by Tabs itself (⌘-click, the middle
     /// button): one click, one tab. When the page's own script already
     /// opened a window for that click, it is the tab — put where the click
     /// asked, behind unless ⇧ was held — and no second one opens. Otherwise
@@ -7062,7 +7084,7 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         guard !tab.shy, !tab.bench else { return }
         history.record(url, title: tab.title)
         // A site's home page that says where its search is (OpenSearch):
-        // with Search a site on, it joins the list (see SiteSearch.learn).
+        // with Tabs a site on, it joins the list (see SiteSearch.learn).
         if prefs.searchesSites, profileID == Profile.personalID, url.scheme == "https", url.path.isEmpty || url.path == "/" {
             webView.evaluateInSearch(SiteSearch.lookup) { value in
                 guard let text = value as? String, let description = URL(string: text) else { return }
@@ -7349,10 +7371,66 @@ final class PrintSheet: NSObject {
     }
 }
 
-// MARK: - Search's own pages, in tabs (see InternalPages.swift)
+// MARK: - Tabs' own pages, in tabs (see InternalPages.swift)
 
 extension Browser {
     /// The tab in this window's row showing that kind of page, if any.
+    /// New Terminal, from the + or File › New Terminal Tab: a card on the
+    /// daemon, and its shell in a tab of its own.
+    func newTerminal() {
+        Task { @MainActor in
+            do {
+                let session = try await Tabsh.createTerminal()
+                show(InternalPage(.tabsh, session.id))
+            } catch {
+                announce("tabsh: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// New Agent, from the +, File › New Agent Tab, or its shortcut: a UI
+    /// card on the daemon and its chat in a tab of its own.
+    func newAgent() {
+        Task { @MainActor in
+            do {
+                let session = try await Tabsh.createAgent()
+                show(InternalPage(.agent, session.id))
+            } catch {
+                announce("tabsh: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// A file chosen in the terminal's explorer: its own tab, and beside the
+    /// terminal when Split View is on, so the page and the code sit together.
+    @discardableResult
+    func showBeside(_ page: InternalPage, of source: Tab?) -> Tab {
+        let tab = show(page, inheritingGroup: true)
+        if let source, prefs.splitView, canSplit(tab, with: source) {
+            pair(tab, with: source, onLeft: false)
+        }
+        return tab
+    }
+
+    /// File › Open in Editor…: choose a file, and open the tab it gets.
+    func openEditor() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        panel.message = "Open a file in a tab of the browser"
+        let open: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.show(InternalPage(.editor, url.path))
+        }
+        if let window {
+            panel.beginSheetModal(for: window, completionHandler: open)
+        } else {
+            open(panel.runModal())
+        }
+    }
+
     func pageTab(_ kind: InternalPage.Kind) -> Tab? {
         tabs.first { $0.page?.kind == kind }
     }
@@ -7363,16 +7441,26 @@ extension Browser {
     /// never private, as Chrome's settings never open in an incognito
     /// window — and the page opens beside it.
     @discardableResult
-    func show(_ page: InternalPage) -> Tab {
-        // A pop-up window holds its one page: Search's own open beside it.
+    func show(_ page: InternalPage, inheritingGroup: Bool = false) -> Tab {
+        // A pop-up window holds its one page: Tabs' own open beside it.
         if websitePopup { return tabDestination.show(page) }
+        // A page opened from a tab that lives in a group (a file chosen in
+        // the terminal's explorer) belongs to that group too, rather than
+        // appearing loose at the end of the row.
+        let sourceGroup = inheritingGroup ? active.flatMap { group(of: $0) } : nil
         if page.kind == .settings, let detail = page.detail, let section = SettingsPanel.Page.named( detail) {
             settingsPage = section
         }
         if page.kind == .passwords { relist() }
         if page.kind == .history, pageTab(.history) == nil { recallMode = .history }
         let tab: Tab
-        if let open = pageTab(page.kind) {
+        // The editor is one tab per file, not one per kind: two files open at
+        // once is the reason for it.
+        let open = (page.kind == .editor || page.kind == .tabsh
+            || page.kind == .agent || page.kind == .preview)
+            ? tabs.first { $0.page == page }
+            : pageTab(page.kind)
+        if let open {
             tab = open
             // Asked for another section, or another browser to bring
             // things from: the open tab moves there, without a step back.
@@ -7391,11 +7479,15 @@ extension Browser {
             }
             tab.show(page)
         }
+        if let sourceGroup {
+            tab.groupID = sourceGroup
+        }
         if launching { dismiss() }
         summoning = false
         editing = false
         typed = ""
         if activeID != tab.id { select(tab) }
+        TabshSessions.shared.attach(tab)
         writeSessionSoon()
         return tab
     }

@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import WebKit
 
-// "● Loom is recording your screen — Stop": a small pill of Search's own,
+// "● Loom is recording your screen — Stop": a small pill of Tabs' own,
 // floating at the foot of the screen for as long as an extension records
 // anything — the screen, a window, the camera or the microphone — beside
 // macOS's own sharing item and dots, and with its own Stop. It never takes
@@ -124,7 +124,7 @@ final class RecordingIndicator: ObservableObject {
 }
 
 /// The panel: borderless, never key or main, over every space and full
-/// screen app, at the foot of the screen Search is on.
+/// screen app, at the foot of the screen Tabs is on.
 private final class PillPanel: NSPanel {
     private let content: NSHostingView<PillView>
     /// Where lent pages go: behind the pill's own content, 2×2 points.

@@ -513,7 +513,7 @@ private struct FoldShadow: ViewModifier {
 
 /// The pointer's moves, wherever it goes, while something is folded: over
 /// this app's windows, and over everything else while another app is in
-/// front, since the edge is still the edge with Search behind.
+/// front, since the edge is still the edge with Tabs behind.
 @MainActor
 private final class Pointer {
     weak var window: NSWindow?

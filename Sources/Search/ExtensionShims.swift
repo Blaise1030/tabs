@@ -28,7 +28,7 @@ enum ExtensionShims {
     /// The name native messages to the browser itself go to.
     static let application = "search"
     nonisolated static let file = "search-shim.js"
-    /// Search's passkey patch, put first in every script an extension runs in
+    /// Tabs' passkey patch, put first in every script an extension runs in
     /// a page's own world (see Passkeys.swift, and `first` in the script).
     nonisolated static let passkeys = "search-passkeys.js"
     /// The first line of a worker that already carries the shim.
@@ -50,7 +50,7 @@ enum ExtensionShims {
 
     /// `fresh`: a package just unpacked or copied in. What only Search writes
     /// beside an extension — which permissions it added, which shim it
-    /// carries — is Search's to say, never the package's: anything by those
+    /// carries — is Tabs' to say, never the package's: anything by those
     /// names that came inside it goes before a word of it is read.
     nonisolated static func prepare(_ folder: URL, fresh: Bool = false, workerGeneration: Int = 0) throws {
         let files = FileManager.default
@@ -97,7 +97,7 @@ enum ExtensionShims {
                let path = inside(worker, of: folder) {
                 if var source = try? String(contentsOf: path, encoding: .utf8) {
                     // Already carrying one: take the old one off, so a newer
-                    // Search puts its newer shim in its place.
+                    // Tabs puts its newer shim in its place.
                     if source.hasPrefix(marker), let end = source.range(of: ender) {
                         source = String(source[end.upperBound...]).trimmingPrefix("\n").description
                     }
@@ -123,9 +123,9 @@ enum ExtensionShims {
         }
 
         // Content scripts too — there only Chrome's behaviour is mended. One
-        // that runs in the page's own world has Search's passkey patch before
+        // that runs in the page's own world has Tabs' passkey patch before
         // it: a password manager's there keeps a reference to
-        // navigator.credentials as it finds it, and that has to be Search's,
+        // navigator.credentials as it finds it, and that has to be Tabs',
         // not WebKit's (see Passkeys.swift).
         if let entries = manifest["content_scripts"] as? [[String: Any]] {
             manifest["content_scripts"] = entries.map { entry -> [String: Any] in
@@ -239,7 +239,7 @@ enum ExtensionShims {
     /// they exist ("Cannot access 'd' before initialization"). Vimium C's
     /// options page lists five, the second awaiting its translations, and
     /// stayed blank. Inside one module's imports WebKit does wait, so the
-    /// tags become one, in a file of Search's beside the page (named with
+    /// tags become one, in a file of Tabs' beside the page (named with
     /// `search-` like the shim). The modules themselves are not touched. Only
     /// plain tags: one marked async, or a src that isn't the package's own
     /// file, leaves the page as it is.
@@ -385,7 +385,7 @@ enum ExtensionShims {
       // A page's own world, where an extension's MAIN-world script runs with
       // this before it, has no extension APIs. Nothing to mend there, and
       // nothing may be left there for a page to see: Safari leaves nothing.
-      // (There, Search's passkey patch holds navigator.credentials.)
+      // (There, Tabs' passkey patch holds navigator.credentials.)
       const ours = (() => { try { return !!(chrome && chrome.runtime && chrome.runtime.id); } catch (e) { return false; } })();
       if (!ours || root.__searchShim) return;
       // Bitwarden's bundled TypeScript uses these as computed class keys
@@ -552,7 +552,7 @@ enum ExtensionShims {
         if (!callback) return promise;
         promise.then((value) => callback(value), (error) => withLastError(error, callback));
       };
-      // Where a tab is, as Search can find it: its place in its window's row
+      // Where a tab is, as Tabs can find it: its place in its window's row
       // and that window's frame. WebKit's window numbers mean nothing to
       // Search, and windows.getAll gives the frames they go with.
       const frames = async () => {
@@ -899,7 +899,7 @@ enum ExtensionShims {
         }
       }
       // WebKit gives a worker the user agent of the last web page that set
-      // one — Safari's, as Search's tabs send — not the Chrome one the
+      // one — Safari's, as Tabs' tabs send — not the Chrome one the
       // extension's pages have. Code that picks its path by it then takes
       // the Safari one: Bitwarden's asks a Safari app for a reply thousands
       // of times a second and floods the browser.
@@ -1086,7 +1086,7 @@ enum ExtensionShims {
             if (background) { sendResponse("pong"); return; }
             return true;
           }
-          // Search's own envelopes come from this extension only: another
+          // Tabs' own envelopes come from this extension only: another
           // extension (onMessageExternal) could otherwise speak as one of its
           // user scripts, or as a frame of its own.
           const fromHere = !!(sender && sender.id === runtime.id);
@@ -1661,7 +1661,7 @@ enum ExtensionShims {
         ["onCreated", "onChanged", "onErased", "onDeterminingFilename"]);
       // A blob URL made in an extension worker belongs to that worker. The
       // page WebKit uses to perform downloads cannot read it. Hand WebKit a
-      // data URL instead, then tell the extension when Search has saved it.
+      // data URL instead, then tell the extension when Tabs has saved it.
       // SingleFile waits for downloads.onChanged before ending its save task.
       if (chrome.downloads?.onChanged?.listeners) {
         const downloads = chrome.downloads;
@@ -1706,8 +1706,8 @@ enum ExtensionShims {
       }
       const ownPanel = !chrome.sidePanel;
       define("sidePanel", ["open", "close", "setOptions", "getOptions", "setPanelBehavior", "getPanelBehavior"]);
-      // A tab's own panel options, and which of Search's tabs that is: the
-      // button asks the tab in front, which has no number on Search's side.
+      // A tab's own panel options, and which of Tabs' tabs that is: the
+      // button asks the tab in front, which has no number on Tabs' side.
       // Told after the options themselves, so a sidePanel.open right after
       // setOptions still finds them.
       if (ownPanel && chrome.sidePanel && chrome.tabs && typeof chrome.tabs.get === "function") {
@@ -1730,7 +1730,7 @@ enum ExtensionShims {
           // Read as the worker starts: Claude's lists its colours in a class.
           Color: { GREY: "grey", BLUE: "blue", RED: "red", YELLOW: "yellow", GREEN: "green",
             PINK: "pink", PURPLE: "purple", CYAN: "cyan", ORANGE: "orange" } });
-      // Groups change in Search's hands, where no event reaches the
+      // Groups change in Tabs' hands, where no event reaches the
       // extension: while it listens, they are asked for every few seconds
       // and what changed is told as Chrome tells it — and at once after the
       // extension changes one itself.
@@ -1804,7 +1804,7 @@ enum ExtensionShims {
       // it can't: a rejection, or lastError for a callback.
       const refuse = (what) => (...args) => {
         const callback = args.length && typeof args[args.length - 1] === "function" ? args.pop() : null;
-        const error = new Error(what + " isn't available in Search");
+        const error = new Error(what + " isn't available in Tabs");
         if (!callback) return Promise.reject(error);
         withLastError(error, callback);
       };
@@ -1869,15 +1869,15 @@ enum ExtensionShims {
       put2("omnibox", { setDefaultSuggestion: () => {}, onInputStarted: event(), onInputChanged: event(),
         onInputEntered: event(), onInputCancelled: event(), onDeleteSuggestion: event() });
       // Screen recording (see ExtensionCapture.swift). Chrome's picker is
-      // Search's question, then the Mac's own; the stream id it hands back is
-      // an id Search gives once, which getUserMedia in the extension's page
+      // Tabs' question, then the Mac's own; the stream id it hands back is
+      // an id Tabs gives once, which getUserMedia in the extension's page
       // turns into the stream. Defined only for an extension that asks for
       // it, as in Chrome: Awesome Screenshot records with getDisplayMedia
       // when there is no desktopCapture.
       const declares = (name) => [...(manifest.permissions || []), ...(manifest.optional_permissions || [])].includes(name);
       const recorder = !inContent && !worker && typeof navigator !== "undefined" && !!navigator.mediaDevices
         && typeof root.MediaDevices === "function";
-      // Only an extension's own page, at the top: Search checks that too.
+      // Only an extension's own page, at the top: Tabs checks that too.
       const captureChannel = (() => {
         try { return recorder && !embedded && window.top === window ? root.webkit.messageHandlers.searchCapture : null; } catch (e) { return null; }
       })();
@@ -1905,7 +1905,7 @@ enum ExtensionShims {
         const P = root.MediaDevices.prototype;
         const realGUM = P.getUserMedia, realGDM = P.getDisplayMedia;
         const held = new Map();
-        // Called by Search alone (ExtensionCapture.record). WebKit counts an
+        // Called by Tabs alone (ExtensionCapture.record). WebKit counts an
         // app's call as a click, and only until its first await, so the
         // page's own getDisplayMedia — kept before any of the extension's
         // code ran — is called at once.
@@ -1963,7 +1963,7 @@ enum ExtensionShims {
           // The sound of a screen or a tab alone: WebKit records none.
           if (desktopId(c.video) === null) {
             stream.getTracks().forEach((t) => t.stop());
-            throw new DOMException("Search can't record the sound of a screen or a tab", "NotFoundError");
+            throw new DOMException("Tabs can't record the sound of a screen or a tab", "NotFoundError");
           }
           const [track] = stream.getVideoTracks();
           const want = displayVideo(c.video);
@@ -2023,7 +2023,7 @@ enum ExtensionShims {
           DesktopCaptureSourceType: { SCREEN: "screen", WINDOW: "window", TAB: "tab", AUDIO: "audio" },
         });
       }
-      // A tab alone can't be recorded in Search: an extension that falls back
+      // A tab alone can't be recorded in Tabs: an extension that falls back
       // to the screen, as Loom does, records the window instead.
       if (declares("tabCapture")) {
         put2("tabCapture", { capture: refuse("tabCapture.capture"), getMediaStreamId: refuse("tabCapture.getMediaStreamId"),
@@ -2039,7 +2039,7 @@ enum ExtensionShims {
         deleteID: refuse("instanceID.deleteID"), deleteToken: refuse("instanceID.deleteToken"),
         getCreationTime: refuse("instanceID.getCreationTime"), onTokenRefresh: event() });
       // Rules that show a button on matching pages: every button is always
-      // shown in Search, so there is nothing for them to do.
+      // shown in Tabs, so there is nothing for them to do.
       const rules = () => ({ addRules: (r, cb) => { if (cb) cb(r || []); }, removeRules: (i, cb) => { if (cb) cb(); },
         getRules: (i, cb) => { const f = typeof i === "function" ? i : cb; if (f) f([]); } });
       put2("declarativeContent", { onPageChanged: rules(),
@@ -2106,7 +2106,7 @@ enum ExtensionShims {
         ContextType: { TAB: "TAB", POPUP: "POPUP", BACKGROUND: "BACKGROUND", OFFSCREEN_DOCUMENT: "OFFSCREEN_DOCUMENT",
           SIDE_PANEL: "SIDE_PANEL", DEVELOPER_TOOLS: "DEVELOPER_TOOLS" },
       });
-      // The popup Search shows is a page of its own, known to WebKit as a
+      // The popup Tabs shows is a page of its own, known to WebKit as a
       // tab with no place in the row (no index). Chrome has no current
       // tab in a popup, and lists it among the popup views; extensions lay
       // themselves out by that (Bitwarden, Proton Pass: or else they fill
@@ -2271,8 +2271,8 @@ enum ExtensionShims {
         AccessLevel: { TRUSTED_CONTEXTS: "TRUSTED_CONTEXTS", TRUSTED_AND_UNTRUSTED_CONTEXTS: "TRUSTED_AND_UNTRUSTED_CONTEXTS" },
       });
       // A page at the address of the extension's popup hears no events
-      // from WebKit: WebKit takes it for its own popup, and Search's popup
-      // is a view of Search's. The one that matters, storage.onChanged —
+      // from WebKit: WebKit takes it for its own popup, and Tabs' popup
+      // is a view of Tabs'. The one that matters, storage.onChanged —
       // Bitwarden learns a self-hosted server's address from it — is passed
       // on by the background, which does hear it, to such pages: the popup,
       // and the same page opened in a tab ("pop out"). They keep their
@@ -2380,7 +2380,7 @@ enum ExtensionShims {
 
       // Rules WebKit can't carry out — a header it doesn't know how to set,
       // say — are refused one by one, where Chrome would take them all. The
-      // rest still go in: one rule Search can't honour shouldn't cost an
+      // rest still go in: one rule Tabs can't honour shouldn't cost an
       // extension every other rule, or its startup.
       const dnr = chrome.declarativeNetRequest;
       // Before WebKit sees them, rules are put the way it takes them: a
@@ -2614,7 +2614,7 @@ enum ExtensionShims {
         });
       }
 
-      // Context menu entries for places Search has no menu for — the old
+      // Context menu entries for places Tabs has no menu for — the old
       // toolbar button contexts are the button's menu now, and there is no
       // app launcher at all.
       for (const name of ["contextMenus", "menus"]) {
@@ -2886,7 +2886,7 @@ enum ExtensionShims {
 
       // Permissions. WebKit knows its own and throws on any other name,
       // where Chrome answers false. The ones Search answers itself are
-      // Search's to grant: those a manifest names are granted, optional
+      // Tabs' to grant: those a manifest names are granted, optional
       // ones are asked for.
       if (chrome.permissions) {
         const webkit = new Set(["activeTab", "alarms", "clipboardWrite", "contextMenus", "cookies", "declarativeNetRequest",
@@ -2983,7 +2983,7 @@ enum ExtensionShims {
       // than the extension's own onMessage. The list lives with the browser,
       // and is registered again whenever the worker starts.
       const scripting = chrome.scripting;
-      // What an extension registers for a page's own world has Search's
+      // What an extension registers for a page's own world has Tabs'
       // passkey patch before it, as its manifest's do (see prepare): a
       // password manager keeps a reference to navigator.credentials as it
       // finds it, and falls back to that. An update that names no world gets
@@ -3835,7 +3835,7 @@ enum ExtensionShims {
     static var panelOff: Set<String> = []
     /// What setOptions said for one tab, by the extension's tab id.
     static var panelTabs: [String: [Int: (path: String?, enabled: Bool?)]] = [:]
-    /// Which of Search's tabs each of those tab ids is, as the extension's
+    /// Which of Tabs' tabs each of those tab ids is, as the extension's
     /// shim found it (sidePanel.placed).
     static var panelTabIDs: [String: [Int: Tab.ID]] = [:]
     /// One voice for every extension that reads aloud.
@@ -3843,7 +3843,7 @@ enum ExtensionShims {
 
     static func answer(_ message: Any, from context: WKWebExtensionContext, owner: Extensions) async throws -> Any? {
         guard let body = message as? [String: Any], let api = body["api"] as? String else {
-            return ["error": "Not a Search message"]
+            return ["error": "Not a Tabs message"]
         }
         let args = body["args"] as? [Any] ?? []
         do {
@@ -3867,7 +3867,7 @@ enum ExtensionShims {
         return group
     }
 
-    /// A group as Chrome describes it. Search's groups have no colour; grey
+    /// A group as Chrome describes it. Tabs' groups have no colour; grey
     /// is Chrome's first.
     private static func chromeGroup(_ group: TabGroup) -> [String: Any] {
         ["id": TabGroup.number(group.id), "title": group.name, "collapsed": group.collapsed,
@@ -3907,7 +3907,7 @@ enum ExtensionShims {
     /// so the one that counts is here. The manifest is the one WebKit
     /// already holds, not the file read again on every call.
     /// A tab's icon for favIconUrl: the picture the tab wears, as a small
-    /// PNG. Search keeps icons as pictures, not addresses, and Chrome's
+    /// PNG. Tabs keeps icons as pictures, not addresses, and Chrome's
     /// favIconUrl may be a data: URL. Made once per site and kept.
     /// A tab as the shim names it: `i`, its place in its window's row as
     /// extensions see it, and `w`, that window's frame from windows.getAll()
@@ -4143,7 +4143,7 @@ enum ExtensionShims {
         case "downloads.erase":
             return []
         case "downloads.pause", "downloads.resume", "downloads.cancel", "downloads.removeFile", "downloads.getFileIcon":
-            throw Unsupported(what: "\(api) isn't available in Search yet")
+            throw Unsupported(what: "\(api) isn't available in Tabs yet")
 
         // MARK: side panel — the window's, beside the page (SidePanel.swift)
         case "sidePanel.setOptions":
@@ -4612,7 +4612,7 @@ enum ExtensionShims {
             if let old = awake[id] { IOPMAssertionRelease(old) }
             var assertion: IOPMAssertionID = 0
             let kind = (display ? kIOPMAssertionTypePreventUserIdleDisplaySleep : kIOPMAssertionTypePreventUserIdleSystemSleep) as CFString
-            if IOPMAssertionCreateWithName(kind, IOPMAssertionLevel(kIOPMAssertionLevelOn), "An extension in Search" as CFString, &assertion) == kIOReturnSuccess {
+            if IOPMAssertionCreateWithName(kind, IOPMAssertionLevel(kIOPMAssertionLevelOn), "An extension in Tabs" as CFString, &assertion) == kIOReturnSuccess {
                 awake[id] = assertion
             }
             return nil
@@ -4621,7 +4621,7 @@ enum ExtensionShims {
             return nil
         case "power.reportActivity":
             var assertion: IOPMAssertionID = 0
-            IOPMAssertionDeclareUserActivity("An extension in Search" as CFString, kIOPMUserActiveLocal, &assertion)
+            IOPMAssertionDeclareUserActivity("An extension in Tabs" as CFString, kIOPMUserActiveLocal, &assertion)
             return nil
 
         // MARK: browsing data
@@ -4675,7 +4675,7 @@ enum ExtensionShims {
         case "readingList.query":
             return []
         case "readingList.addEntry", "readingList.removeEntry", "readingList.updateEntry":
-            throw Unsupported(what: "Search has no reading list")
+            throw Unsupported(what: "Tabs has no reading list")
 
         // MARK: system
         case "system.cpu.getInfo":
@@ -4729,7 +4729,7 @@ enum ExtensionShims {
             if let collapsed = props["collapsed"] as? Bool, collapsed != group.collapsed { browser.toggleTabGroup(group.id) }
             return chromeGroup(browser.tabGroups.first { $0.id == group.id } ?? group)
         case "tabGroups.move":
-            throw Unsupported(what: "Search can't move a tab group for an extension")
+            throw Unsupported(what: "Tabs can't move a tab group for an extension")
         case "tabs.group":
             let places: [Any] = first as? [Any] ?? []
             let tabs = places.compactMap { located($0, context: context, owner: owner) }
@@ -4738,7 +4738,7 @@ enum ExtensionShims {
             guard let browser = owner.browser(of: tabs[0]), tabs.allSatisfy({ owner.browser(of: $0) === browser }) else {
                 throw Unsupported(what: "Tabs from different windows can't share a group")
             }
-            // Pins and private tabs are never in a group in Search.
+            // Pins and private tabs are never in a group in Tabs.
             guard tabs.allSatisfy({ $0.pin == nil && !$0.shy }) else {
                 throw Unsupported(what: "Pinned and private tabs can't be grouped")
             }
@@ -4780,7 +4780,7 @@ enum ExtensionShims {
             throw Unsupported(what: "getAuthToken needs a Google account signed into Chrome; this extension would need launchWebAuthFlow instead")
 
         default:
-            throw Unsupported(what: "\(api) isn't available in Search")
+            throw Unsupported(what: "\(api) isn't available in Tabs")
         }
     }
 

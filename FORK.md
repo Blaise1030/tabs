@@ -63,7 +63,7 @@ Changed so far:
 Still to do once the product name is settled (all are string/branding passes, not
 architecture):
 
-- Product/display name (`NAME`/`SHOWN` in `build.sh`, menu strings, About, welcome screens).
+- ~~Product/display name~~ Done: the browser is **Tabs** (`NAME="Tabs"` in `build.sh`, `Tabs.app`, menu/About/welcome strings). Internal Swift module, bundle id (`cc.tabsh.browser`) and data folder (`tabsh-browser`) are unchanged, so existing settings and sessions carry over.
 - App icon (`Icon/` and `build.sh`), DMG background, site links.
 - Default-browser name and the `http`/`https` handler registration.
 - Passkeys: `Search.passkeys.entitlements` is tied to Office Commun's team
@@ -84,6 +84,14 @@ A Rust daemon on the machine plus an Astro/Solid web app. The daemon serves the 
 API on `http://127.0.0.1:7681`, authenticated with a bearer token kept at
 `~/.tabsh/token`. Its data lives beside the token
 (`state.db`, `chats/`, `uploads/`).
+
+**The browser runs its own instance.** It starts the bundled `tabsh` with `TABSH_DB` under
+`~/Library/Application Support/tabsh-browser/tabsh/` (database, token, `chats/` and
+`uploads/` all beside it) and `PORT=7682`, and only adopts a daemon whose `/api/about`
+reports that database. A tabsh serving the web app, the CLI or a phone on 7681 is left
+alone: the two never share a database, a token or a card list. The shells it starts inherit
+`TABSH_DB`, so `tabsh status` in an agent's hook reports to the browser's instance too,
+whichever `tabsh` binary is on `PATH`. See `TabshDaemon.swift`.
 
 Relevant API (all under the bearer token, see `~/Developer/tabsh/src/state.rs` for the full
 list):
@@ -171,19 +179,21 @@ No tabsh-side split is needed in solo mode: the browser's split is the only one.
 ### One package
 
 The goal is one `.app` the user installs and opens: browser, split, session tabs, terminal and
-agent chat. The tabsh **daemon** is the one external piece; there are two options:
+agent chat. The tabsh **daemon** is the one external piece:
 
-1. **Reuse a running daemon** (the default assumption): talk to `127.0.0.1:7681` if
-   `/api/about` answers; otherwise offer to start one.
-2. **Ship the daemon inside the bundle** (the "all in one package" version): put a signed
-   `tabsh` binary in `Contents/Resources/`, start it at launch if no daemon answers, stop it
-   at quit, and pass `TABSH_DB`/`PORT` only when a private instance is needed. Never fight a
-   daemon that is already installed and running, and never share its `~/.tabsh` if a private
-   one is started.
+- **Ship the daemon inside the bundle** (done): a signed `tabsh` binary in
+  `Contents/Resources/`, started at launch if this browser's instance is not already up.
+- **Its own state** (done): `TABSH_DB` and `PORT` point it at
+  `~/Library/Application Support/tabsh-browser/tabsh/` and port 7682. It never adopts the
+  user's daemon on 7681 and never touches `~/.tabsh`; see `TabshDaemon.swift`. Starting
+  fresh means the browser's cards and the web app's cards are separate lists.
+- **It outlives the app on purpose**: tabsh's promise is that shells stay up when the tab,
+  the window and the app go away, so quitting the browser does not stop it. A later launch
+  reuses it.
 
-Packaging concerns to settle when we get there: signing/notarizing the embedded daemon as a
-helper, updating it with the app through the same signed feed, the extra binary size, and
-offering "Open tabsh in another browser" as a fallback. The daemon embeds the web app, so no
+Packaging concerns still to settle: signing/notarizing the embedded daemon as a helper,
+updating it with the app through the same signed feed, the extra binary size, and offering
+"Open tabsh in another browser" as a fallback. The daemon embeds the web app, so no
 separate web assets are needed beyond the binary.
 
 ### Working on the tabsh side
@@ -224,7 +234,7 @@ Each milestone should be additive files where possible. Avoid editing `Browser.s
 
 ## Open decisions
 
-1. Product name, display name and icon (the bundle id is a placeholder but a safe one).
+1. ~~Product name and display name: **Tabs**.~~ Icon still to do (the bundle id is a placeholder but a safe one).
 2. Does the board exist anywhere in the browser, or is the switcher enough? Recommended: one
    optional "tabsh" tab for the full board, everything else session tabs.
 3. Are session tabs pinned by default, or grouped under a "tabsh" group?

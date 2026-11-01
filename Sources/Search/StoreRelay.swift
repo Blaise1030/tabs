@@ -7,7 +7,7 @@ import WebKit
 // "Switch to Chrome", and an "Add to Chrome" button that stays grey. Search
 // installs from the store on its own (Extensions.install, through Crx), so on
 // the store's pages the banner goes and the grey button is replaced by an
-// "Add to Search" one — the button people already look for, rather than a bar
+// "Add to Tabs" one — the button people already look for, rather than a bar
 // at the bottom of the window they would have to notice. What gets installed
 // is read from the tab's own address, never from anything the page says; the
 // page only asks, and the usual confirmation still stands between the asking
@@ -103,7 +103,7 @@ final class StoreRelay: NSObject, WKScriptMessageHandler {
         var id = pageID();
         var installed = !!id && state.installed.indexOf(id) >= 0;
         var busy = !!id && state.busy === id;
-        label(ours, installed ? 'Added to Search' : (busy ? 'Adding…' : 'Add to Search'));
+        label(ours, installed ? 'Added to Tabs' : (busy ? 'Adding…' : 'Add to Tabs'));
         ours.disabled = installed || busy;
       }
 
@@ -165,14 +165,14 @@ extension Browser {
     /// Where "Chrome Web Store…" goes: its extensions, not its themes.
     static let webStore = URL(string: "https://chromewebstore.google.com/category/extensions")!
 
-    /// The page's "Add to Search" was pressed: the extension this tab is showing.
+    /// The page's "Add to Tabs" was pressed: the extension this tab is showing.
     func addFromStore(_ tab: Tab) {
         guard #available(macOS 15.4, *), let url = tab.address, let id = Crx.storeID(of: url) else { return }
         Extensions.shared.install(from: id)
     }
 
     /// Tells a store page what is installed and what is on its way, so its
-    /// button can say "Added to Search" or "Adding…".
+    /// button can say "Added to Tabs" or "Adding…".
     func tellStore(_ tab: Tab) {
         guard #available(macOS 15.4, *), let url = tab.address, StoreOffer.isStorePage(url) else { return }
         tab.tellStore(installed: Extensions.shared.installed.map(\.id), busy: Extensions.shared.busy)

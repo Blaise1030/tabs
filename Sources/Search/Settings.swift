@@ -19,6 +19,7 @@ struct SettingsPanel: View {
     @Environment(\.asTab) private var asTab
 
     @ObservedObject private var updater = Updater.shared
+    @ObservedObject private var terminalSettings = TerminalPreferences.shared
     @ObservedObject private var shield = Shield.shared
     @State private var isDefault = Links.isDefault
     /// A site shortcut being written, kept out of Preferences until it's saved.
@@ -34,7 +35,7 @@ struct SettingsPanel: View {
     @MainActor static var arcBefore: Preferences.ArcSetup?
 
     enum Page: String, CaseIterable, Identifiable {
-        case general, appearance, tabs, browsing, spaces, passwords, privacy, ai, extensions, keyboard, about
+        case general, appearance, tabs, browsing, spaces, passwords, privacy, agents, ai, extensions, keyboard, terminal, about
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -45,9 +46,11 @@ struct SettingsPanel: View {
             case .spaces: return "Spaces & Pins"
             case .passwords: return "Passwords"
             case .privacy: return "Privacy"
+            case .agents: return "Agents"
             case .ai: return "AI"
             case .extensions: return "Extensions"
             case .keyboard: return "Keyboard & Mouse"
+            case .terminal: return "Terminal"
             case .about: return "About"
             }
         }
@@ -60,9 +63,11 @@ struct SettingsPanel: View {
             case .spaces: return "square.stack"
             case .passwords: return "key"
             case .privacy: return "hand.raised"
+            case .agents: return "point.3.connected.trianglepath.dotted"
             case .ai: return "sparkles"
             case .extensions: return "puzzlepiece.extension"
             case .keyboard: return "keyboard"
+            case .terminal: return "terminal"
             case .about: return "info.circle"
             }
         }
@@ -79,7 +84,7 @@ struct SettingsPanel: View {
         /// The rail's three blocks: the browser, your data and tools, About.
         static var blocks: [[Page]] {
             [[.general, .appearance, .tabs, .browsing, .spaces],
-             [.passwords, .privacy] + (AI.shipped ? [.ai] : []) + [.extensions, .keyboard],
+             [.passwords, .privacy, .agents] + (AI.shipped ? [.ai] : []) + [.extensions, .keyboard, .terminal],
              [.about]]
         }
     }
@@ -327,8 +332,15 @@ struct SettingsPanel: View {
             GroupBlock(title: "Shortcuts", icon: "command") {
                 ShortcutsPage(browser: browser, store: .shared, prefs: prefs)
             }
+        case .terminal:
+            GroupBlock(title: "Preview", icon: "eye") {
+                TerminalPreview()
+            }
+            groups(of: page)
         case .extensions:
             ExtensionsPage(browser: browser)
+        case .agents:
+            AgentProvidersSettings()
         case .ai:
             if AI.shipped { AISettings(browser: browser, prefs: prefs) }
         default:
@@ -420,7 +432,7 @@ struct SettingsPanel: View {
     private func detail(of item: SettingsItem) -> String {
         switch item.id {
         case "general.default":
-            return isDefault ? "Search is the default browser on this Mac" : item.detail
+            return isDefault ? "Tabs is the default browser on this Mac" : item.detail
         case "downloads.folder":
             return prefs.downloads.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
         case "search.engine": return searchDetail
@@ -454,6 +466,7 @@ struct SettingsPanel: View {
         case .spaces: spacesControl(item.id)
         case .passwords, .privacy: keptControl(item.id)
         case .keyboard, .about: otherControl(item.id)
+        case .terminal: terminalControl(item.id)
         default: EmptyView()
         }
     }
@@ -666,6 +679,57 @@ struct SettingsPanel: View {
     }
 
     @ViewBuilder
+    private func terminalControl(_ id: String) -> some View {
+        let terminal = TerminalPreferences.shared
+        switch id {
+        case "terminal.font":
+            TerminalFontPicker()
+        case "terminal.sounds":
+            Picker("", selection: Binding<TypingSoundPack>(
+                get: { TypingSounds.shared.pack },
+                set: { chosen in
+                    TypingSounds.shared.pack = chosen
+                    TypingSounds.shared.preview(chosen)
+                })) {
+                ForEach(TypingSoundPack.allCases) { pack in
+                    Text(pack.title).tag(pack)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+        case "terminal.size":
+            HStack(spacing: 8) {
+                Text("\(Int(terminal.fontSize)) pt")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Palette.ink)
+                    .monospacedDigit()
+                Stepper("", value: Binding(get: { terminal.fontSize },
+                                           set: { terminal.fontSize = $0 }),
+                        in: 10...24, step: 1)
+                    .labelsHidden()
+            }
+            .fixedSize()
+        case "terminal.light", "terminal.dark":
+            Picker("", selection: Binding<TerminalThemeName>(
+                get: { id == "terminal.light" ? terminal.lightTheme : terminal.darkTheme },
+                set: { chosen in
+                    if id == "terminal.light" { terminal.lightTheme = chosen }
+                    else { terminal.darkTheme = chosen }
+                })) {
+                ForEach(TerminalThemeName.allCases) { theme in
+                    Text(theme.title).tag(theme)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
     private func otherControl(_ id: String) -> some View {
         switch id {
         case "links.peek":
@@ -707,7 +771,7 @@ struct SettingsPanel: View {
         case "shield":
             if let trouble = shield.trouble {
                 Rule()
-                Line(trouble, "Nothing is being blocked until this clears. Try again, or restart Search") {
+                Line(trouble, "Nothing is being blocked until this clears. Try again, or restart Tabs") {
                     Pill("Try again") { shield.compile() }
                 }
                 .under()
@@ -902,12 +966,20 @@ struct SettingsPanel: View {
                 .aspectRatio(Logomark.canvas.width / Logomark.canvas.height, contentMode: .fit)
                 .frame(height: 34)
             VStack(alignment: .leading, spacing: 3) {
-                Text("Search")
+                Text("Tabs")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Palette.ink)
-                Text("by Office Commun · version \(Updater.version)")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Palette.muted)
+                HStack(spacing: 4) {
+                    Link(destination: URL(string: "https://tabsh.cc/")!) {
+                        Text("tabsh.cc").underline()
+                    }
+                    .buttonStyle(.plain)
+                    .help("tabsh.cc")
+                    Text("· version \(Updater.version)")
+                }
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.muted)
+                .tint(Palette.muted)
             }
         }
     }
@@ -917,9 +989,9 @@ struct SettingsPanel: View {
     private var versionTitle: String {
         switch updater.stage {
         case .none: return "Updates"
-        case .fetching(let next): return "Search \(next.version) is downloading…"
-        case .ready(let next): return "Search \(next.version) is ready"
-        case .offered(let next), .waiting(let next): return "Search \(next.version) is out"
+        case .fetching(let next): return "Tabs \(next.version) is downloading…"
+        case .ready(let next): return "Tabs \(next.version) is ready"
+        case .offered(let next), .waiting(let next): return "Tabs \(next.version) is out"
         }
     }
 
@@ -931,7 +1003,7 @@ struct SettingsPanel: View {
         case .fetching(let next):
             return next.notes ?? "Quietly, in the background. Nothing you have set is touched"
         case .ready(let next):
-            return next.notes ?? "It's there the next time you open Search"
+            return next.notes ?? "It's there the next time you open Tabs"
         case .offered(let next):
             return next.notes ?? "Open the disk image, the same as the first time"
         case .waiting(let next):
@@ -1236,7 +1308,7 @@ private struct CardPicture: View {
 }
 
 /// Light, dark, or both halves for Auto: drawn in the look itself, not in
-/// the one Search is in now.
+/// the one Tabs is in now.
 private struct LookPicture: View {
     let look: Look
 

@@ -121,9 +121,9 @@ struct KeyCombo: Codable, Hashable {
         return digit && !combo.option && !combo.shift && combo.command && !combo.control
     }
 
-    /// Keys an extension never has, wherever Search's own commands are:
+    /// Keys an extension never has, wherever Tabs' own commands are:
     /// closing, and opening a tab or a window, as Chrome keeps them. Yours
-    /// to move among Search's commands, not to give to an extension.
+    /// to move among Tabs' commands, not to give to an extension.
     static func isBrowserOnly(_ combo: KeyCombo) -> Bool {
         [KeyCombo("w"), KeyCombo("w", shift: true), KeyCombo("w", option: true),
          KeyCombo("t"), KeyCombo("t", shift: true), KeyCombo("n"), KeyCombo("n", shift: true)].contains(combo)
@@ -133,7 +133,12 @@ struct KeyCombo: Codable, Hashable {
 /// A menu command, and the key it has unless you give it another.
 struct Command: Identifiable {
     enum Section: String, CaseIterable {
-        case app = "Search", file = "File", edit = "Edit", view = "View", tabs = "Tabs", spaces = "Spaces", bookmarks = "Bookmarks", history = "History"
+        // Raw values must be unique: the app section and the tabs section
+        // would both read "Tabs" now the browser is called that.
+        case app = "App", file = "File", edit = "Edit", view = "View", tabs = "Tabs", spaces = "Spaces", bookmarks = "Bookmarks", history = "History"
+
+        /// The heading shown in Settings › Shortcuts.
+        var title: String { self == .app ? "Tabs" : rawValue }
     }
 
     let id: String
@@ -161,6 +166,8 @@ struct Command: Identifiable {
 
         Command("file.newWindow", "New Window", .file, KeyCombo("n")) { _ in Browsers.newWindow() },
         Command("file.newTab", "New Tab", .file, KeyCombo("t")) { $0.launch() },
+        Command("file.newTerminal", "New Terminal Tab", .file, KeyCombo("t", option: true)) { $0.newTerminal() },
+        Command("file.newAgent", "New Agent…", .file, KeyCombo("a", shift: true)) { $0.show(InternalPage(.agentComposer)) },
         Command("file.newPrivateTab", "New Private Tab", .file, KeyCombo("n", shift: true)) { $0.newShyTab() },
         Command("file.reopen", "Reopen Closed Tab", .file, KeyCombo("t", shift: true)) { $0.reopen() },
         Command("file.openAddress", "Open Address…", .file, KeyCombo("l")) { $0.edit() },
@@ -304,8 +311,8 @@ final class ShortcutStore: ObservableObject {
 
     private func defaultKey(for id: String) -> KeyCombo? {
         guard id.hasPrefix("ext:") else { return Command.named(id)?.defaultKey }
-        // What the manifest asked for, while no key of Search's is in the
-        // way: checked each time, so moving or resetting one of Search's
+        // What the manifest asked for, while no key of Tabs' is in the
+        // way: checked each time, so moving or resetting one of Tabs'
         // commands frees or takes an extension's key at once.
         return manifest[id]?.key.flatMap { keepsFromExtensions($0) ? nil : $0 }
     }
@@ -343,7 +350,7 @@ final class ShortcutStore: ObservableObject {
     }
 
     /// A key an extension may not have: one of the Mac's, or one of
-    /// Search's commands has as things stand.
+    /// Tabs' commands has as things stand.
     func keepsFromExtensions(_ combo: KeyCombo) -> Bool {
         KeyCombo.isReserved(combo) || KeyCombo.isBrowserOnly(combo) || Command.all.contains { key(for: $0.id) == combo }
     }
@@ -358,7 +365,7 @@ final class ShortcutStore: ObservableObject {
         return true
     }
 
-    /// The command already on `combo`, other than `id`: one of Search's,
+    /// The command already on `combo`, other than `id`: one of Tabs',
     /// or an extension's.
     func owner(of combo: KeyCombo, except id: String) -> (id: String, title: String)? {
         if let command = Command.all.first(where: { $0.id != id && key(for: $0.id) == combo }) {
@@ -398,7 +405,7 @@ final class ShortcutStore: ObservableObject {
     }
 
     /// Every extension command's key as it now stands, handed to WebKit: a
-    /// change to one of Search's can free or take an extension's.
+    /// change to one of Tabs' can free or take an extension's.
     private func applyExtensions() {
         guard #available(macOS 15.4, *) else { return }
         for command in extensionCommands() { applied(command.id) }
@@ -446,7 +453,7 @@ extension ShortcutStore {
 
     /// An extension just loaded: the keys it came with noted, and yours
     /// put in their place. A key its manifest asks for that is the Mac's,
-    /// or that one of Search's commands has, it doesn't get — as in Chrome,
+    /// or that one of Tabs' commands has, it doesn't get — as in Chrome,
     /// an extension never has a key the browser uses. Its command is left
     /// without one, for you to give it one in Settings if you like.
     func adopt(_ context: WKWebExtensionContext, id ext: String) {

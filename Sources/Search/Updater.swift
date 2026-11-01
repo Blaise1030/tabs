@@ -29,7 +29,7 @@ import Security
 final class Updater: ObservableObject {
     static let shared = Updater()
 
-    /// tabsh-browser is a fork of Search: upstream's feed names builds signed
+    /// tabsh-browser is a fork of Tabs: upstream's feed names builds signed
     /// by Office Commun, and installing one would replace this app with
     /// theirs. Off until this app has a feed and an identity of its own.
     nonisolated static let enabled = false
@@ -168,10 +168,10 @@ final class Updater: ObservableObject {
         }
         switch stage {
         case .ready(let next):
-            say?("Search \(next.version) is ready — relaunch to use it")
+            say?("Tabs \(next.version) is ready — relaunch to use it")
             return
         case .fetching(let next):
-            say?("Search \(next.version) is downloading…")
+            say?("Tabs \(next.version) is downloading…")
             return
         default: break
         }
@@ -179,7 +179,7 @@ final class Updater: ObservableObject {
         say?("Checking for updates…")
         check { [weak self] found in
             guard let self else { return }
-            if found == nil { self.say?("Search is up to date"); return }
+            if found == nil { self.say?("Tabs is up to date"); return }
             // The waiting branch or `take` announces the next state afterward.
         }
     }
@@ -214,13 +214,13 @@ final class Updater: ObservableObject {
             case .waiting(let known) where known == found: break
             case .none, .offered, .waiting:
                 stage = .waiting(found)
-                say?("Search \(found.version) is out — choose Install Update in the Search menu")
+                say?("Tabs \(found.version) is out — choose Install Update in the Search menu")
             }
         }
     }
 
     /// The disk image, when the bundle can't be swapped where it is: fetched
-    /// by Search itself, never through a web page, and opened only if its
+    /// by Tabs itself, never through a web page, and opened only if its
     /// hash is the signed feed's and its signature is Office Commun's.
     @Published private(set) var fetchingDisk = false
     /// What a test run decided about a disk image, for the bench.
@@ -264,7 +264,7 @@ final class Updater: ObservableObject {
         case .none, .offered, .waiting: break
         }
         stage = .fetching(release)
-        say?("Search \(release.version) is downloading…")
+        say?("Tabs \(release.version) is downloading…")
         Task.detached(priority: .utility) {
             let worked: Bool
             do {
@@ -281,8 +281,8 @@ final class Updater: ObservableObject {
         guard case .fetching(let fetching) = stage, fetching == release else { return }
         stage = worked ? .ready(release) : .offered(release)
         say?(worked
-            ? "Search \(release.version) is ready — it's there the next time you open it"
-            : "Search \(release.version) is out — choose Download Update in the Search menu")
+            ? "Tabs \(release.version) is ready — it's there the next time you open it"
+            : "Tabs \(release.version) is out — choose Download Update in the Search menu")
     }
 
     /// Quit, and come back as the new one. A shell waits for this process
@@ -366,7 +366,7 @@ final class Updater: ObservableObject {
         return data
     }
 
-    /// The team that signs Search's releases, and with them its feed.
+    /// The team that signs Tabs' releases, and with them its feed.
     nonisolated static let team = "7BYKA895MC"
     nonisolated static let feedIdentifier = "com.officecommun.search.appcast"
 
@@ -542,7 +542,7 @@ private enum Swap {
         guard let expected = release.dmgSha256 else { throw Refused.hash }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("search-disk-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let dmg = folder.appendingPathComponent("Search \(release.version).dmg")
+        let dmg = folder.appendingPathComponent("Tabs \(release.version).dmg")
         try await download(release.dmg, to: dmg)
         guard try digest(of: dmg) == expected else { throw Refused.hash }
         var code: SecStaticCode?

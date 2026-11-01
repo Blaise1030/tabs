@@ -15,7 +15,7 @@ struct WindowTitle: View {
     static func name(page: String, private shy: Bool) -> String {
         if shy { return "Private Tab" }
         let trimmed = page.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Search" : trimmed
+        return trimmed.isEmpty ? "Tabs" : trimmed
     }
 
     var body: some View {

@@ -10,7 +10,7 @@ import Foundation
 // group, or a site explicitly kept awake from its card.
 //
 // The time counts from when you last left the tab, or let go of it (unpinned,
-// ungrouped, unnamed: Tab.letGo), and goes on counting while Search is quit:
+// ungrouped, unnamed: Tab.letGo), and goes on counting while Tabs is quit:
 // the session file carries both (Session.Entry.touched, .letGo).
 // Without that, yesterday's tabs would come back each morning as if just
 // looked at, and a browser quit every night would never close a thing.

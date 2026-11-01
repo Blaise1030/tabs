@@ -25,7 +25,7 @@ struct AccountList: View {
                     name: login.user.isEmpty ? "No name" : login.user, detail: login.host) { browser.choose(login) }
             }
             // The Mac's Passwords app, when turned on (ApplePasswords.swift):
-            // after Search's own, marked as Apple's.
+            // after Tabs' own, marked as Apple's.
             ForEach(asked.apple) { login in
                 Row(mark: .letter(login.user.first.map { String($0).uppercased() } ?? "•"),
                     name: login.user.isEmpty ? "No name" : login.user, detail: "Apple Passwords") { browser.choose(login) }

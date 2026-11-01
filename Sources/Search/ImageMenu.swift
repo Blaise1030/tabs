@@ -178,7 +178,7 @@ extension Browser {
     /// The picture's bytes. Fetched without a cache on disk: it may be a
     /// private tab's, and a copy is not a visit. A blob: picture — the ones
     /// WhatsApp Web shows — exists only inside the page that made it, where
-    /// no URLSession can reach: it is read there, in Search's own world, in
+    /// no URLSession can reach: it is read there, in Tabs' own world, in
     /// the frame it was right-clicked in (idea 179).
     func imageData(at url: URL, in tab: Tab) async -> Data? {
         guard url.scheme?.lowercased() == "blob" else {

@@ -19,7 +19,7 @@ import WebKit
 enum Swipe {
     /// Whether a sideways scroll may mean back or forward: the Mac's own
     /// Swipe between pages, in System Settings › Trackpad and › Mouse, the
-    /// one Safari follows. Search draws its own swipe, with WebKit's turned
+    /// one Safari follows. Tabs draws its own swipe, with WebKit's turned
     /// off, so it has to ask: a one-finger Magic Mouse scroll swiped with the
     /// setting off, taking a Google Sheet's sideways scroll for a way back
     /// (#464). The Mac answers for the device of the event being handled —

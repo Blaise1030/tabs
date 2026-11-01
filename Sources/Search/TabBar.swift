@@ -102,11 +102,16 @@ struct TabBar: View {
                                             // rather than by splitting the run in two: the
                                             // index and the count each tab is given are what
                                             // carrying one along the row works from.
-                                            let firstLoose = browser.displayedTabs.firstIndex { $0.pin == nil }
-                                            ForEach(Array(browser.displayedTabs.enumerated()), id: \.element.id) { index, tab in
+                                            let (shown, hidden) = flatRun(in: geo.size.width)
+                                            let firstLoose = shown.firstIndex { $0.pin == nil }
+                                            ForEach(Array(shown.enumerated()), id: \.element.id) { index, tab in
                                                 if pinLine, index == firstLoose { PinLine() }
-                                                topTab(tab, index: index, count: browser.displayedTabs.count,
+                                                let all = browser.displayedTabs.firstIndex { $0.id == tab.id } ?? index
+                                                topTab(tab, index: all, count: browser.displayedTabs.count,
                                                        group: nil, strip: geo.size.width, each: each)
+                                            }
+                                            if !hidden.isEmpty {
+                                                TabOverflowButton(browser: browser, tabs: hidden)
                                             }
                                         }
                                     }
@@ -137,7 +142,13 @@ struct TabBar: View {
                     // The way to a new page, right after the tabs rather than
                     // at the end of their run, so it is there however far the
                     // run has scrolled. Out of sight until the pointer is up here.
-                    Button { browser.launch() } label: {
+                    // A new tab, or a new terminal: the two kinds of tab
+                    // the browser has now (see TabBar's plus and Tabsh).
+                    Menu {
+                        Button("New Tab") { browser.launch() }
+                        Button("New Terminal") { browser.newTerminal() }
+                        Button("New Agent…") { browser.show(InternalPage(.agentComposer)) }
+                    } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(Palette.muted)
@@ -150,6 +161,9 @@ struct TabBar: View {
                                     .fill(plussed ? Palette.hover : .clear)
                             )
                     }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
                     .buttonStyle(.plain)
                     .onHover { plussed = $0 }
                     .opacity(nearby ? 1 : 0)
@@ -370,6 +384,30 @@ struct TabBar: View {
     /// wide as the room there is once they don't.
     private func run(in strip: CGFloat) -> CGFloat {
         min(content(in: strip), room(in: strip))
+    }
+
+    /// With a flat run (no groups, no pins), tabs keep their minimum width and
+    /// the ones that no longer fit are handed to the strip's searchable menu
+    /// rather than shrunk to marks or scrolled out of reach. The tab on
+    /// screen stays in the row — it swaps places with the last one that fits.
+    private func flatRun(in strip: CGFloat) -> (shown: [Tab], hidden: [Tab]) {
+        let all = browser.displayedTabs
+        guard !browser.prefs.usesTabGroups, all.allSatisfy({ $0.pin == nil }), !all.isEmpty else {
+            return (all, [])
+        }
+        let each = width(in: strip)
+        let available = room(in: strip) - TabOverflowButton.width - Metrics.tabGap
+        guard available > 0 else { return (all, []) }
+        let capacity = max(1, Int((available + Metrics.tabGap) / (each + Metrics.tabGap)))
+        guard all.count > capacity else { return (all, []) }
+        var shown = Array(all.prefix(capacity))
+        var hidden = Array(all.dropFirst(capacity))
+        if let active = browser.activeID, let index = hidden.firstIndex(where: { $0.id == active }) {
+            let current = hidden.remove(at: index)
+            if let last = shown.popLast() { hidden.insert(last, at: 0) }
+            shown.append(current)
+        }
+        return (shown, hidden)
     }
 
     /// The line stands between the pins and the tabs that come and go, and
@@ -724,7 +762,7 @@ private struct TabPill: View {
         .overlay { MiddleClick(act: close) }
         .onHover { hovering = $0 }
         .contextMenu { TabMenu(browser: browser, tab: tab, close: close) }
-        .help(pinned || compact ? tab.label : "")
+        .help(tab.tabsh?.tooltip ?? (pinned || compact ? tab.label : ""))
         .animation(Motion.quick, value: hovering)
         .animation(Motion.glide, value: editing)
         .animation(Motion.glide, value: tab.pin)
@@ -752,6 +790,8 @@ private struct TabPill: View {
                     TabShortcutNumber(number: number)
                 } else if tab.loading {
                     Ring()
+                } else if let session = tab.tabsh {
+                    TabshTabMark(tab: tab, session: session, size: 15, tint: colour)
                 } else {
                     Mark(icon: prefs.glyph == .icons ? tab.icon : nil, letter: tab.monogram, size: 15, dim: tab.asleep)
                 }
@@ -777,7 +817,9 @@ private struct TabPill: View {
                 TabAddressField(browser: browser)
                     .frame(height: 16)
             } else {
-                if prefs.glyph == .icons, !tab.isBlank {
+                if let session = tab.tabsh {
+                    TabshTabMark(tab: tab, session: session, size: 15, tint: colour)
+                } else if prefs.glyph == .icons, !tab.isBlank {
                     Mark(icon: tab.icon, letter: tab.monogram, size: 15)
                 }
                 if tab.bench {
@@ -1767,5 +1809,116 @@ struct PinField: NSViewRepresentable {
             let browser = browser
             DispatchQueue.main.async { browser.endPinEdit() }
         }
+    }
+}
+
+// MARK: - Tabs that no longer fit
+
+/// The strip's overflow: a small count where the next tab would have been,
+/// opening the tabs that no longer fit in a list you can search. Shown only
+/// with a flat run (see TabBar.flatRun); grouped and pinned runs keep their
+/// scroll.
+private struct TabOverflowButton: View {
+    static let width: CGFloat = 30
+
+    @ObservedObject var browser: Browser
+    let tabs: [Tab]
+    @State private var open = false
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            HStack(spacing: 2) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("\(tabs.count)")
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .foregroundStyle(Palette.muted)
+            .frame(width: TabOverflowButton.width, height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(open ? Palette.hover : .clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("More tabs")
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            TabOverflowList(browser: browser, tabs: tabs, close: { open = false })
+        }
+    }
+}
+
+private struct TabOverflowList: View {
+    @ObservedObject var browser: Browser
+    let tabs: [Tab]
+    let close: () -> Void
+
+    @State private var query = ""
+
+    private var filtered: [Tab] {
+        let needle = query.trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty else { return tabs }
+        return tabs.filter { name($0).localizedCaseInsensitiveContains(needle) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Search tabs", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    if filtered.isEmpty {
+                        Text("No tabs match.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Palette.muted)
+                            .padding(.top, 6)
+                    }
+                    ForEach(filtered) { tab in
+                        Button {
+                            browser.select(tab)
+                            close()
+                        } label: {
+                            HStack(spacing: 8) {
+                                if let icon = tab.icon {
+                                    Image(nsImage: icon)
+                                        .resizable()
+                                        .frame(width: 15, height: 15)
+                                        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                                } else {
+                                    Image(systemName: "globe")
+                                        .font(.system(size: 11))
+                                        .frame(width: 15, height: 15)
+                                        .foregroundStyle(Palette.muted)
+                                }
+                                Text(name(tab))
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Palette.ink)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(browser.activeID == tab.id ? Palette.hover : .clear)
+                            )
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(width: 300, height: 360)
+    }
+
+    private func name(_ tab: Tab) -> String {
+        let title = tab.title.trimmingCharacters(in: .whitespaces)
+        if !title.isEmpty { return title }
+        return tab.shownURL?.host() ?? "New Tab"
     }
 }

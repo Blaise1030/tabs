@@ -12,7 +12,7 @@ import WebKit
 // the Mac hands the keys back to the app before.
 //
 // So once a tab that played sound has been quiet for ten seconds, a script in
-// Search's world mutes the media there that is paused, remembers which, and
+// Tabs' world mutes the media there that is paused, remembers which, and
 // unmutes those when one of them plays again. Ten seconds, so the play/pause
 // key pressed twice still resumes the video. The page reads the real value
 // and hears the change, as it would any other; a page that muted something
@@ -26,8 +26,8 @@ import WebKit
 // Audio()): those keep the keys as before.
 //
 // What it costs: a site that saves its player's mute when it changes (Plyr
-// does) saves it while Search holds it, and a tab closed then leaves the next
-// visit's player muted. And a page that mutes what Search already holds can't
+// does) saves it while Tabs holds it, and a tab closed then leaves the next
+// visit's player muted. And a page that mutes what Tabs already holds can't
 // be told from no change at all, so Search unmutes it when it plays.
 //
 // One timer a tab, started when its sound stops and gone once it has run, the
@@ -43,7 +43,7 @@ final class MediaKeys: NSObject, WKScriptMessageHandler {
     /// in too, an embedded player being a player. The newest few.
     private(set) var frames: [WKFrameInfo] = []
 
-    /// Every frame, in Search's world: the page never sees it, and it sees
+    /// Every frame, in Tabs' world: the page never sees it, and it sees
     /// the page's media and their events as they are.
     static let watch = """
     (function () {
@@ -53,7 +53,7 @@ final class MediaKeys: NSObject, WKScriptMessageHandler {
       var played = new WeakSet(), held = new WeakSet(), watched = new WeakSet(), told = false;
       function plays(e) {
         // Only the element's own play counts: a page's synthetic 'play'
-        // event neither marks it as played nor unmutes what Search holds.
+        // event neither marks it as played nor unmutes what Tabs holds.
         if (!e.isTrusted) return;
         var el = e.target;
         played.add(el);

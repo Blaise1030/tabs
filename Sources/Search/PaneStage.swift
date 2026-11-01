@@ -266,7 +266,7 @@ final class PaneStage: NSView {
     }
 
     /// The page a tab puts on the stage: none while it is blank, one of
-    /// Search's own pages, asleep or floating, as Page decides it (see
+    /// Tabs' own pages, asleep or floating, as Page decides it (see
     /// Stage.swift).
     private func page(_ tab: Tab) -> NSView? {
         !tab.isWeb || tab.asleep || tab.floating ? nil : tab.web
@@ -913,7 +913,7 @@ extension PaneStage {
         // into the new layout.
         guard !reduced else { return fade() }
         NSAnimationContext.runAnimationGroup({ context in
-            // Search's glide, as near as a curve comes to its spring:
+            // Tabs' glide, as near as a curve comes to its spring:
             // quick away, settling without a bounce, in about 0.3 s.
             context.duration = 0.32
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)

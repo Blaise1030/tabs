@@ -36,7 +36,7 @@ Chrome's runtime constants in content scripts, and filtering incomplete
 ## Live WebKit fixture
 
 After building, run `python3 Tests/ExtensionWorkerRecovery/live.py` on macOS
-15.4 or newer. On Intel, copy `build/intel/Search.app` to `build/Search.app`
+15.4 or newer. On Intel, copy `build/intel/Tabs.app` to `build/Tabs.app`
 first, as the existing hidden bench harness expects. It creates and removes
 its own disposable profile and serves only the local fixture. The suite has
 an eight-minute deadline plus bounded cleanup. It prints environment/version,

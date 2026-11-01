@@ -20,11 +20,11 @@ import WebKit
 //
 // The window itself in macOS full screen (the green button, ⌃⌘F) is the
 // full screen people mean most (fab, 23 Oct 2026), and it went the same way:
-// an Escape nothing in Search wanted went on through the page to AppKit,
+// an Escape nothing in Tabs wanted went on through the page to AppKit,
 // which took the window out of full screen on it. Its key never came near
 // the check above, which looked only for a page WebKit had in its own
 // window, so the switch did nothing there. Now the key monitor counts such a
-// press here (see `press(_:leaving:)`) once Search's own Escape jobs have
+// press here (see `press(_:leaving:)`) once Tabs' own Escape jobs have
 // passed it over — a find bar, the address field, a peek, a panel: those go
 // at one press, as before, and count for nothing. A counted press is kept
 // from the page and from AppKit; the first puts the reminder up, a second
@@ -138,7 +138,7 @@ final class FullScreenEscape {
     }
 
     /// An Escape in a browser window that is itself in macOS full screen,
-    /// which none of Search's own Escape jobs wanted (ContentView.watchKeys),
+    /// which none of Tabs' own Escape jobs wanted (ContentView.watchKeys),
     /// with the switch on: the key monitor keeps it from the page and from
     /// AppKit whatever is decided here. A first press puts the reminder up;
     /// the second in the same window within `within` takes the window out of

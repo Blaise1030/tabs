@@ -149,8 +149,9 @@ enum Metrics {
     /// The tab strip. The window's title bar is grown to match it so the
     /// traffic lights come down with the tabs — otherwise giving the row room
     /// to breathe just leaves it sitting below three buttons it used to line
-    /// up with.
-    static let strip: CGFloat = 52
+    /// up with. 40 leaves the 28-point pill 6 above and below; it used to be
+    /// 52, which read as a toolbar rather than a strip.
+    static let strip: CGFloat = 40
     /// With the tabs down the side the page is a card: this far from the
     /// window's edges (and from the column, folded away), and its corners
     /// this round.
@@ -185,7 +186,10 @@ enum Metrics {
     /// inside its own edges.
     static let tabWidth: CGFloat = 186
     static let tabTitled: CGFloat = 80
-    static let tabMinWidth: CGFloat = 36
+    /// Past this the strip no longer squeezes a tab: with more tabs than fit
+    /// at this width the rest move into the strip's searchable menu (see
+    /// TabOverflowButton). Readable, so a title still means something.
+    static let tabMinWidth: CGFloat = 120
     static let tabGap: CGFloat = 2
     /// A pinned tab is a square the height of the row, holding one letter.
     static let pinWidth: CGFloat = 30
@@ -290,7 +294,7 @@ enum Motion {
     }
 }
 
-/// Search's mark — Drice's Subtract.svg, a pill with an S cut out of it,
+/// Tabs' mark — Drice's Subtract.svg, a pill with an S cut out of it,
 /// read from its own path data rather than loaded from a file, so it stays a
 /// crisp vector at any size. No plate, no square behind it: the mark draws exactly
 /// what the source file has and nothing it doesn't, the way every other icon
@@ -470,5 +474,63 @@ private struct CardShape: InsettableShape {
         var shape = self
         shape.inset += amount
         return shape
+    }
+}
+
+/// The composer's outline: a rounded rectangle with the app icon's continuous
+/// corner rather than a circle's arc. The curve lives in the corners only, so
+/// the long edges stay straight — a superellipse drawn through the whole rect
+/// instead pinches into a lens with points at either end once the composer is
+/// twenty times wider than it is tall.
+struct Superellipse: Shape {
+    /// The corner's reach, before it is cut back to half the shorter side.
+    var radius: CGFloat = 21
+
+    func path(in rect: CGRect) -> Path {
+        let corner = min(radius, min(rect.width, rect.height) / 2)
+        return RoundedRectangle(cornerRadius: corner, style: .continuous)
+            .path(in: rect)
+    }
+}
+
+/// The top and bottom of a scroll area, fading its content into the ground
+/// rather than cutting it off at an edge. It sits over the scroll view and
+/// takes no clicks; the content can still scroll under it.
+struct ScrollFade: View {
+    let background: Color
+    var height: CGFloat = 18
+    /// Each end is drawn only when something is actually hidden past it: at
+    /// the top of the list there is nothing to fade, and the gradient would
+    /// just grey the first row.
+    var showTop = true
+    var showBottom = true
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if showTop {
+                LinearGradient(
+                    colors: [background, background.opacity(0)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: height)
+                .transition(.opacity)
+            }
+
+            Spacer(minLength: 0)
+
+            if showBottom {
+                LinearGradient(
+                    colors: [background.opacity(0), background],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: height)
+                .transition(.opacity)
+            }
+        }
+        .animation(Motion.quick, value: showTop)
+        .animation(Motion.quick, value: showBottom)
+        .allowsHitTesting(false)
     }
 }

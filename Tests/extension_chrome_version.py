@@ -2,7 +2,7 @@
 """The Chrome version extensions see is a current one (#685).
 
 Build first (`./build.sh`), then `python3 Tests/extension_chrome_version.py`.
-It runs a copy of build/Search.app under a bundle id of its own, hidden, in
+It runs a copy of build/Tabs.app under a bundle id of its own, hidden, in
 a world of its own with split_view.py's harness; the copy, its WebKit
 folders and the world are removed afterwards.
 

@@ -503,7 +503,7 @@ final class Preferences: ObservableObject {
     @Published var panelSite: String {
         didSet { store.set(panelSite, forKey: "panel.site") }
     }
-    /// Which window a floating video goes into: Search's own, as it always
+    /// Which window a floating video goes into: Tabs' own, as it always
     /// was, or macOS's picture in picture (see NativePiP.swift).
     @Published var floatStyle: FloatStyle {
         didSet {
@@ -519,7 +519,7 @@ final class Preferences: ObservableObject {
         didSet { store.set(escapeTwice, forKey: "fullscreen.escapeTwice") }
     }
     /// A newer build is fetched, checked and put in place on its own, as it
-    /// always was. Off, Search still looks every hour and says so, and waits
+    /// always was. Off, Tabs still looks every hour and says so, and waits
     /// for Install in Settings (see Updater.installsOnItsOwn).
     @Published var installsUpdates: Bool {
         didSet {
@@ -659,7 +659,7 @@ final class Preferences: ObservableObject {
         let width = store.object(forKey: "sidebar.width") as? Double ?? Double(Metrics.side)
         sideWidth = min(Metrics.sideMax, max(Metrics.sideMin, CGFloat(width)))
         cards = store.object(forKey: "layout.cards") as? Bool ?? true
-        glyph = store.string(forKey: "glyph").flatMap(Glyph.init) ?? .letters
+        glyph = store.string(forKey: "glyph").flatMap(Glyph.init) ?? .icons
         engine = store.string(forKey: "search.engine").flatMap(Engine.init) ?? .standard
         customEngine = store.string(forKey: "search.custom") ?? ""
         keywords = store.data(forKey: "search.keywords")

@@ -8,7 +8,7 @@ import Foundation
 // traded here for a key of your own — billed to your credits, limited as
 // you set it on openrouter.ai — and kept like one you pasted (AIKeys).
 //
-// The callback is never loaded. Search is the browser the flow runs in,
+// The callback is never loaded. Tabs is the browser the flow runs in,
 // so it takes the address as the tab is about to go there — in the tab it
 // opened for the flow, while that flow is waiting, coming from openrouter.ai,
 // and for ten minutes at most, as long as OpenRouter's code lasts. Anywhere
@@ -51,7 +51,7 @@ enum AISignIn {
             URLQueryItem(name: "callback_url", value: callback.absoluteString),
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
-            URLQueryItem(name: "key_label", value: "Search"),
+            URLQueryItem(name: "key_label", value: "Tabs"),
         ]
         guard let url = parts?.url else { return }
         let tab = browser.open(url, foreground: true)
@@ -79,7 +79,7 @@ enum AISignIn {
                 let key = try await AIClient.shared.exchange(code: code, verifier: flow.verifier)
                 switch AIKeys.save(key, for: .openRouter) {
                 case .kept: _ = finish(true, nil, tab, browser)
-                case .unavailable: _ = finish(false, "This copy of Search can't keep keys (it isn't the signed release).", tab, browser)
+                case .unavailable: _ = finish(false, "This copy of Tabs can't keep keys (it isn't the signed release).", tab, browser)
                 case .failed: _ = finish(false, "The keychain refused the key.", tab, browser)
                 }
             } catch {

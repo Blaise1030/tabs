@@ -87,7 +87,7 @@ final class Bench {
     /// Whether the bench was switched on in Settings, by you. The setting
     /// itself lives in the defaults, which any program you run can write; on
     /// its own it opens nothing. The switch also leaves a mark in the
-    /// keychain — its data protection half, where only apps signed as Search
+    /// keychain — its data protection half, where only apps signed as Tabs
     /// with its profile can read or write, under the app's own access group —
     /// and without the mark the setting is put back to off at launch, with a
     /// word about it. Test runs keep the setting alone: their worlds hold
@@ -102,7 +102,7 @@ final class Bench {
         }
 
         /// The mark is there — or there is nowhere to keep one: a copy built
-        /// without Search's provisioning profile has no access group, and
+        /// without Tabs' provisioning profile has no access group, and
         /// keeps the switch as it always was.
         static var given: Bool {
             var asked = query
@@ -482,7 +482,7 @@ final class Bench {
             guard let tab = find(request, in: browser) else { answer(missing(request)); return }
             guard let js = request["js"] as? String else { answer(["error": "eval needs js"]); return }
             house(tab)
-            // Search's own world is where its page scripts live (see Web.world).
+            // Tabs' own world is where its page scripts live (see Web.world).
             if request["world"] as? String == "search" {
                 tab.web.evaluateJavaScript(js, in: nil, in: Web.world) { result in
                     switch result {
@@ -1714,13 +1714,13 @@ final class Bench {
             // says, what the page's view says, and Edit › Substitutions as it
             // would open, with its ticks. toggle NAME: the menu's own action,
             // which writes WebKit's default in the app's standard domain —
-            // the real Search's, for a probe of the real app — so only in a
+            // the real Tabs', for a probe of the real app — so only in a
             // copy under a bundle id of its own (Tests/text_replacement.py).
             guard Store.testing else { answer(["error": "textcheck only works on a --test run"]); return }
             let web = find(request, in: browser)?.built ?? browser.active?.built
             if let name = request["toggle"] as? String {
                 guard Store.ownContainer else {
-                    answer(["error": "textcheck toggle only works in a copy under its own bundle id — it would switch the real Search's setting"])
+                    answer(["error": "textcheck toggle only works in a copy under its own bundle id — it would switch the real Tabs' setting"])
                     return
                 }
                 guard let kind = Substitution(rawValue: name) else { answer(["error": "toggle quotes|dashes|replacement"]); return }
@@ -2504,8 +2504,8 @@ final class Bench {
                 return
             }
             let items = NSApp.mainMenu?.items.first { $0.submenu?.title == "Window" }?.submenu?.items ?? []
-            guard let item = items.first(where: { $0.title == "Search" }), let action = item.action else {
-                answer(["error": "no Search item in the Window menu", "items": items.map(\.title)])
+            guard let item = items.first(where: { $0.title == "Tabs" }), let action = item.action else {
+                answer(["error": "no Tabs item in the Window menu", "items": items.map(\.title)])
                 return
             }
             NSApp.sendAction(action, to: item.target, from: item)
@@ -3429,7 +3429,7 @@ final class Bench {
                 browser.bringingIn = ["off", "false", "0", "no"].contains(text) ? nil
                     : ["on", "true", "1", "yes", "extensions"].contains(text) ? "" : text
             }
-            // Search's own pages (InternalPages.swift): one shown by its
+            // Tabs' own pages (InternalPages.swift): one shown by its
             // address as a link would open it, one reached from the page in
             // front as its own buttons do, and an address typed on the tab
             // in front.
@@ -3997,7 +3997,7 @@ final class Bench {
                     "title": tab.title,
                     "url": tab.address?.absoluteString ?? "",
                     "blank": tab.isBlank,
-                    // One of Search's own pages (InternalPages.swift), by its address.
+                    // One of Tabs' own pages (InternalPages.swift), by its address.
                     "internal": tab.page?.url.absoluteString ?? "",
                     "canBack": tab.canGoBack,
                     "canForward": tab.canGoForward,
@@ -4242,7 +4242,7 @@ final class Bench {
             "shy": tab.shy,
             "noisy": tab.noisy,
             "muted": tab.muted,
-            // Darkened by Search, as the page last said, and what the page
+            // Darkened by Tabs, as the page last said, and what the page
             // was seen to be: dark by itself, light, or not looked at (see
             // Dusk.swift).
             "dusked": tab.dusked,

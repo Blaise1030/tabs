@@ -228,7 +228,7 @@ final class SiteNotifications: NSObject {
 }
 
 extension SiteNotifications: UNUserNotificationCenterDelegate {
-    /// Shown even with Search in front, as a browser's are.
+    /// Shown even with Tabs in front, as a browser's are.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .list, .sound])

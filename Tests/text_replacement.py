@@ -38,7 +38,7 @@ SUPPORT = f"{HOME}/Library/Application Support/Search ({W})"
 SUITE = f"com.officecommun.search.test.{W}"
 SOCK = f"{SUPPORT}/bench.sock"
 COPY = Path(tempfile.mkdtemp(prefix="tr-probe-")) / "Search.app"
-EXE = str(COPY / "Contents" / "MacOS" / "Search")
+EXE = str(COPY / "Contents" / "MacOS" / "Tabs")
 
 PAGE = b"""<!doctype html><title>typing</title>
 <input id=i autocomplete=off><textarea id=t></textarea>"""

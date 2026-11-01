@@ -6,7 +6,7 @@
 
 It speaks MCP over stdio, one JSON-RPC message per line, and nothing but the
 standard library. The agent calls open_session first, which starts this
-checkout's build/Search.app hidden, in a world of its own (SEARCH_PROBE,
+checkout's build/Tabs.app hidden, in a world of its own (SEARCH_PROBE,
 see fresh.sh): its own folder, settings and website data, nothing of the
 browser someone is using in reach. Every other tool takes that session.
 Nothing here reaches a Search this server didn't start: not the installed
@@ -54,7 +54,7 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-APP = str(ROOT / "build" / "Search.app")
+APP = str(ROOT / "build" / "Tabs.app")
 HOME = os.path.expanduser("~")
 SUPPORT = f"{HOME}/Library/Application Support"
 WEBKIT = f"{HOME}/Library/WebKit/com.officecommun.search"

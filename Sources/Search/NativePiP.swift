@@ -1,7 +1,7 @@
 import WebKit
 
 /// The floating video as macOS's own picture in picture, for whoever picks
-/// it in Settings › General › The floating video (idea 376). Search's own
+/// it in Settings › General › The floating video (idea 376). Tabs' own
 /// window (Float.swift) stays the default: it floats without a click and
 /// keeps the page alive in it. This hands the playing video to WebKit's
 /// picture in picture instead, the window Safari uses, with the system's
@@ -18,7 +18,7 @@ enum FloatStyle: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .search: return "Search's window"
+        case .search: return "Tabs' window"
         case .system: return "Picture in picture"
         }
     }
@@ -31,7 +31,7 @@ enum NativePiP {
     /// WebKit lets a page into picture in picture on macOS only with a
     /// preference outside the public framework, off by default there (Safari
     /// turns it on). On only while picture in picture is the choice, so with
-    /// Search's window nothing changes for any page; asked for first, as
+    /// Tabs' window nothing changes for any page; asked for first, as
     /// Web.inspector asks, and a WebKit without it answers "refused".
     static func allow(_ preferences: WKPreferences, on: Bool = chosen) {
         let set = NSSelectorFromString("_setAllowsPictureInPictureMediaPlayback:")

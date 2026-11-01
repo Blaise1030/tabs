@@ -450,7 +450,7 @@ private final class SitePanelDelegate: NSObject, ObservableObject, WKNavigationD
 
 /// The panel page's own delegate: a link it opens elsewhere goes to a tab,
 /// its camera and microphone are asked for as any extension page's are, and
-/// recording the screen is Search's own call only (see ExtensionCapture).
+/// recording the screen is Tabs' own call only (see ExtensionCapture).
 @MainActor
 private final class PanelDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
     weak var browser: Browser?

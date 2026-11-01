@@ -1,7 +1,7 @@
 import WebKit
 
 /// The page-side part of ⌘F. A count and the range selected by Next always
-/// come from the same list, built in Search's own world (`Web.world`), which
+/// come from the same list, built in Tabs' own world (`Web.world`), which
 /// the page cannot see into: not the word looked for, not the list, and none
 /// of the functions it is built with — a page that swaps `Range`,
 /// `getSelection` or `RegExp` for its own swaps them in its world only.
@@ -161,7 +161,7 @@ final class PageFind {
     )
 
     /// `callAsyncJavaScript` supplies these names as arguments; the query is
-    /// never interpolated into source. State and ranges live only in Search's
+    /// never interpolated into source. State and ranges live only in Tabs'
     /// isolated content world, so the page's nodes stay untouched. The matches
     /// are painted with `CSS.highlights` and one adopted style sheet, which the
     /// page can read back, but not the list the count comes from.

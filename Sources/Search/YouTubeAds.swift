@@ -16,7 +16,7 @@ import WebKit
 // shape is handed on as it came, so a change at YouTube leaves the video
 // playing, with its ads, rather than broken.
 //
-// Written for Search from YouTube's page structure as it is publicly
+// Written for Tabs from YouTube's page structure as it is publicly
 // documented; no code is taken from another blocker.
 //
 // What the page-world script can reach, for Security: only the page's own
@@ -28,7 +28,7 @@ import WebKit
 // apply to it and needs no exception. Its source is visible through
 // toString(), as LiveRate's and the passkeys patch are: never hidden.
 //
-// A second script, in Search's own world (pages can't see it), is the
+// A second script, in Tabs' own world (pages can't see it), is the
 // fallback when an ad plays all the same: while YouTube's player says
 // `ad-showing`, the video is muted and played at 16×, and its sound and speed
 // are put back the moment the ad is over. It never seeks: an ad stitched into
@@ -144,7 +144,7 @@ enum YouTubeAds {
         """
     }
 
-    /// In Search's world: an ad that plays all the same goes by muted and
+    /// In Tabs' world: an ad that plays all the same goes by muted and
     /// fast, and the video comes back as it was.
     static func skipper(hosts: [String]) -> String {
         """

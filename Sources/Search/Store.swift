@@ -124,7 +124,7 @@ enum Store {
         let support = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         // The fork keeps its own session, history and passwords: an installed
-        // Search must not share this app's data folder.
+        // Tabs must not share this app's data folder.
         let name = "tabsh-browser"
         let home = support.appendingPathComponent(world.map { "\(name) (\($0))" } ?? name, isDirectory: true)
         if !testing {

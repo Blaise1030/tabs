@@ -523,7 +523,7 @@ final class History: ObservableObject {
             Store.quarantine(file)
             return
         }
-        // Keys written by an older Search can meet under the new rule:
+        // Keys written by an older Tabs can meet under the new rule:
         // they are merged, never trusted to be unique.
         var cleaned = false
         var loaded = Dictionary(list.map { saved in

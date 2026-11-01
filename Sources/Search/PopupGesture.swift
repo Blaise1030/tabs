@@ -3,7 +3,7 @@ import WebKit
 /// One new browsing context for a recent real interaction. WebKit's form
 /// submission path still uses its synchronous gesture indicator; after a
 /// fetch, a POST to _blank can be refused even while userActivation is active.
-/// Search keeps the short-lived permission outside the page instead.
+/// Tabs keeps the short-lived permission outside the page instead.
 struct PopupGesture {
     private var origin: String?
     private var recorded = false

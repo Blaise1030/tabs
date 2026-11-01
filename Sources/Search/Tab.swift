@@ -13,17 +13,17 @@ import WebKit
 // keeps what it takes to come back exactly where it was.
 
 enum Web {
-    /// Where Search's own page scripts run, and where their messages come
+    /// Where Tabs' own page scripts run, and where their messages come
     /// from: a world of their own beside the page's. They see the same page,
     /// and the page sees none of them — no variable of theirs, and no
     /// `window.webkit`, which Safari never shows a page and which sites read
     /// as an app's embedded web view rather than a browser. Google answered
     /// that with a CAPTCHA every few searches, and refused sign-ins as "not
-    /// secure" (24 Sep 2026). Only Search's passkey patch has to stand in
+    /// secure" (24 Sep 2026). Only Tabs' passkey patch has to stand in
     /// the page's own world, and nothing there leads back to it.
     @MainActor static let world = WKContentWorld.world(name: "Search")
 
-    /// Every handler of Search's taken off a controller: in its own world,
+    /// Every handler of Tabs' taken off a controller: in its own world,
     /// and in the page's, where they all were before 24 Sep 2026 — a tab
     /// opened by a link inherits its opener's configuration, handlers
     /// included, and registering a name twice is a hard crash.
@@ -73,7 +73,7 @@ enum Web {
     /// starting, the window stuck meanwhile. Sharing one lets WebKit have
     /// the next process ready: 9 to 10 ms, for the same memory and the same
     /// number of processes (measured with ./bench bookmark URL new, 24 Sep 2026).
-    /// It also carries Search's geolocation provider (see SiteLocation),
+    /// It also carries Tabs' geolocation provider (see SiteLocation),
     /// which asks macOS nothing until a page you allowed wants a position.
     static let pool: WKProcessPool = {
         let pool = WKProcessPool()
@@ -121,7 +121,7 @@ enum Web {
         config.preferences.isElementFullscreenEnabled = true
         // WebKit's synchronous popup check rejects async POST sign-ins.
         // The UI delegate instead consumes a recent trusted interaction
-        // recorded in Search's isolated world (see PopupGesture.swift).
+        // recorded in Tabs' isolated world (see PopupGesture.swift).
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         // Sound waits for a click, as everywhere; video too when Settings
         // says videos wait (Never Auto-Play, in Safari's words).
@@ -337,6 +337,13 @@ final class Tab: ObservableObject, Identifiable {
 
     func didCommit() {
         popupGesture.clear()
+        // A new document has its own ground; until it says what that is, the
+        // window goes back to the app's colours rather than keeping the last
+        // page's.
+        if chromeTheme != nil {
+            chromeTheme = nil
+            onChromeTheme?(self)
+        }
         // What the old page was refused went with it.
         if !blockedPopups.isEmpty { blockedPopups = [] }
         // A translated page is gone; its frames with it.
@@ -557,8 +564,13 @@ final class Tab: ObservableObject, Identifiable {
     /// True while something on the page is making noise, so the row can say
     /// which tab it is coming from.
     @Published var noisy = false
-    /// Darkened by Search, as its page last said (see Dusk.swift).
+    /// Darkened by Tabs, as its page last said (see Dusk.swift).
     @Published var dusked = false
+    /// The colour the page paints itself with, measured (see ChromeTheme).
+    /// Nil until the page has said, and again when a new document starts.
+    @Published private(set) var chromeTheme: ChromeTheme?
+    /// Called when that reading changes, so the window can follow the page.
+    var onChromeTheme: ((Tab) -> Void)?
     /// What the page measured: true, dark by itself; nil, not yet measured.
     var duskNative: Bool?
     /// The page's frames that asked whether it is darkened, to be told
@@ -606,7 +618,7 @@ final class Tab: ObservableObject, Identifiable {
     var imageFrame: WKFrameInfo? { images.frame }
     var searchName: (() -> String?)?
     var onSearch: ((Tab, String) -> Void)?
-    /// "Add to Search" was pressed on the Chrome Web Store page this tab shows.
+    /// "Add to Tabs" was pressed on the Chrome Web Store page this tab shows.
     var onStoreAdd: ((Tab) -> Void)?
     /// The middle button was let go over a link. The browser opens it in a
     /// tab of its own beside this one, without leaving the page you are on.
@@ -619,7 +631,7 @@ final class Tab: ObservableObject, Identifiable {
     /// WebKit keeps each kind of view to its own pages, so the tab has to be
     /// swapped for one built for the address (see Browser.replace).
     var onCross: ((Tab, URL) -> Void)?
-    /// The extension whose store page has its own "Add to Search" button in
+    /// The extension whose store page has its own "Add to Tabs" button in
     /// place — so the bar at the bottom of the window doesn't offer it twice.
     @Published var storePlaced: String?
 
@@ -637,6 +649,7 @@ final class Tab: ObservableObject, Identifiable {
     private let iconChanges = IconRelay()
     private let middles = MiddleRelay()
     private let dusk = DuskRelay()
+    private let chrome = ChromeThemeRelay()
     var popupGesture = PopupGesture()
     /// Windows this page asked for and was refused, newest last, a few at
     /// most: the quiet sign beside its title offers them (BlockedPopups.swift).
@@ -672,7 +685,7 @@ final class Tab: ObservableObject, Identifiable {
     let shy: Bool
 
     /// The account last filled here from Apple's Passwords app, so sending
-    /// it isn't offered a second place in Search's keychain. A keyed hash of
+    /// it isn't offered a second place in Tabs' keychain. A keyed hash of
     /// the password, never the password.
     var appleFill: AppleFill?
 
@@ -773,15 +786,18 @@ final class Tab: ObservableObject, Identifiable {
     /// page. It still owns a web view — built now, warm by the time it's needed.
     var isBlank: Bool { address == nil && page == nil }
     /// A tab with a web page — loaded, on its way or asleep — as opposed to
-    /// an empty one or one of Search's own pages.
+    /// an empty one or one of Tabs' own pages.
     var isWeb: Bool { address != nil }
 
-    // MARK: - Search's own pages (see InternalPages.swift)
+    // MARK: - Tabs' own pages (see InternalPages.swift)
 
     /// Settings, History and the rest, shown in this tab in place of a web
     /// page. Never with a web view behind it.
     @Published private(set) var page: InternalPage?
-    /// The pages Back and Forward go to, between Search's own pages.
+    /// The tabsh card behind a session tab: its title, hook-driven status,
+    /// note, folder and agent (see TabshSessions.swift).
+    @Published private(set) var tabsh: Tabsh.SessionInfo?
+    /// The pages Back and Forward go to, between Tabs' own pages.
     private var trail: [InternalPage] = []
     private var ahead: [InternalPage] = []
     /// The page this tab left for the web: Back from the first web page
@@ -791,7 +807,25 @@ final class Tab: ObservableObject, Identifiable {
     /// What the field shows for this tab, and what is copied.
     var shownURL: URL? { page?.url ?? address }
 
-    /// Go to one of Search's own pages. `stepping`: whether the page it
+    /// A terminal or agent tab's card id: the daemon's session behind it.
+    var tabshSessionID: String? {
+        guard let page, page.kind == .tabsh || page.kind == .agent else { return nil }
+        return page.detail
+    }
+
+    /// The card's title and status for the tab row. The card's name wins:
+    /// it is the thing the board calls the session, and the hooks keep it
+    /// current. A card that vanishes leaves the page's own name behind.
+    func adopt(tabsh info: Tabsh.SessionInfo?) {
+        self.tabsh = info
+        guard let info else { return }
+        let name = info.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty, title != name {
+            title = name
+        }
+    }
+
+    /// Go to one of Tabs' own pages. `stepping`: whether the page it
     /// leaves is one Back comes back to — not for another section of the
     /// same page, which only moves the address.
     func show(_ next: InternalPage, stepping: Bool = true) {
@@ -819,6 +853,10 @@ final class Tab: ObservableObject, Identifiable {
             ahead = []
         }
         draft = ""
+        // A page that isn't a session tab doesn't wear the card it left.
+        if self.page?.kind != next.kind || self.page?.detail != next.detail {
+            tabsh = nil
+        }
         page = next
         title = next.title
         adoptIcon()
@@ -838,6 +876,7 @@ final class Tab: ObservableObject, Identifiable {
     /// can't find your way back to.
     var label: String {
         if let name, !name.isEmpty { return name }
+        if let tabsh, !tabsh.name.isEmpty { return tabsh.name }
         if let page { return page.title }
         if popup, let host = address?.host(), !host.isEmpty {
             return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
@@ -1074,12 +1113,12 @@ final class Tab: ObservableObject, Identifiable {
         controller.addUserScript(
             WKUserScript(source: ImageRelay.watch, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: Web.world)
         )
-        // Every frame, in Search's world: a paused video gives the media keys
+        // Every frame, in Tabs' world: a paused video gives the media keys
         // back (see MediaKeys.swift).
         controller.addUserScript(
             WKUserScript(source: MediaKeys.watch, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: Web.world)
         )
-        // The store's "Add to Search" only where Search can add extensions.
+        // The store's "Add to Tabs" only where Tabs can add extensions.
         // Before macOS 15.4 it was drawn all the same, and pressing it did
         // nothing at all; Settings › Extensions says what they need instead.
         if #available(macOS 15.4, *) {
@@ -1112,7 +1151,7 @@ final class Tab: ObservableObject, Identifiable {
             )
         }
         // Passkeys stand in the page's own world — they replace the page's
-        // functions — and reach Search through a bridge in Search's, off or on:
+        // functions — and reach Search through a bridge in Tabs', off or on:
         // an extension's page script can carry the patch either way (see
         // Passkeys.swift and ExtensionShims.passkeys).
         if !FormRelay.passkeysOffered {
@@ -1340,7 +1379,7 @@ final class Tab: ObservableObject, Identifiable {
             show(own)
             return
         }
-        // Out of one of Search's own pages, onto the web: Back comes back.
+        // Out of one of Tabs' own pages, onto the web: Back comes back.
         if let page {
             behind = page
             self.page = nil
@@ -1377,7 +1416,7 @@ final class Tab: ObservableObject, Identifiable {
         cover = nil
         adoptIcon()
         web.open(url)
-        // Back, from a page that came out of one of Search's own, goes there.
+        // Back, from a page that came out of one of Tabs' own, goes there.
         steps()
     }
 
@@ -1719,7 +1758,7 @@ final class Tab: ObservableObject, Identifiable {
     /// A view that has lost its document is given the address back instead:
     /// there is nothing else for it to reload.
     func reload(fromOrigin: Bool = false) {
-        // Search's own pages are drawn from what is there now, always.
+        // Tabs' own pages are drawn from what is there now, always.
         guard page == nil else { return }
         // A pin put down with ⌘W has no view left to reload; waking it is
         // the reload.
@@ -1747,7 +1786,7 @@ final class Tab: ObservableObject, Identifiable {
             steps()
             return
         }
-        // At the first web page after one of Search's own: back to it.
+        // At the first web page after one of Tabs' own: back to it.
         if let behind, built?.canGoBack != true {
             show(behind, stepping: false)
             return
@@ -1768,7 +1807,7 @@ final class Tab: ObservableObject, Identifiable {
     }
     /// Every page that way, nearest first, for the list a held Back or
     /// Forward shows: the web pages WebKit keeps. Nothing for a tab whose
-    /// page was never built, or one showing a page of Search's own, whose
+    /// page was never built, or one showing a page of Tabs' own, whose
     /// steps are kept apart (`trail`, `ahead`).
     func pages(back: Bool) -> [WKBackForwardListItem] {
         guard let built, page == nil else { return [] }
@@ -1958,7 +1997,7 @@ final class MiddleRelay: NSObject, WKScriptMessageHandler {
       }, true);
       // A page on this Mac linking to another file. WebKit lets a file page
       // read only its own folder, and drops a click on a link out of it
-      // before Search is asked: the page stayed where it was, and only the
+      // before Tabs is asked: the page stayed where it was, and only the
       // address typed in opened it. Search opens it the way it opens a typed
       // one. A plain click the page hasn't claimed, to a file, not a jump
       // within the page and not a download.
@@ -2964,7 +3003,7 @@ final class ScrollRelay: NSObject, WKScriptMessageHandler {
 extension WKWebView {
     /// An address, or a file on this Mac. WebKit reads a file only when told
     /// which folder the page may read from, and loads nothing at all
-    /// otherwise: an .html double-clicked in the Finder, once Search is the
+    /// otherwise: an .html double-clicked in the Finder, once Tabs is the
     /// Mac's browser, opened a tab that stayed empty.
     func open(_ url: URL) {
         if url.isFileURL {
@@ -2981,7 +3020,7 @@ extension WKWebView {
         }
     }
 
-    /// JavaScript run in Search's own world (see Web.world), where its page
+    /// JavaScript run in Tabs' own world (see Web.world), where its page
     /// scripts are, answered the way `evaluateJavaScript` answers: the value,
     /// or nil for none or an error.
     func evaluateInSearch(_ js: String, then: ((Any?) -> Void)? = nil) {

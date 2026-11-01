@@ -496,7 +496,7 @@ final class Extensions: NSObject, ObservableObject {
     @discardableResult
     private func load(_ item: Installed) async -> Bool {
         if let forgetting = forgetting[item.id] { await forgetting.value }
-        // The shim this build of Search carries, in place of whatever the
+        // The shim this build of Tabs carries, in place of whatever the
         // build that installed it carried — away from the main thread: the
         // first launch after an update reads and rewrites every script and
         // page each extension ships (Grammarly: 450 ms).
@@ -962,7 +962,7 @@ final class Extensions: NSObject, ObservableObject {
         defer { try? FileManager.default.removeItem(at: folder) }
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try Data(#"{"manifest_version": 3, "name": "Search", "version": "1"}"#.utf8).write(to: folder.appendingPathComponent("manifest.json"))
+            try Data(#"{"manifest_version": 3, "name": "Tabs", "version": "1"}"#.utf8).write(to: folder.appendingPathComponent("manifest.json"))
             let standIn = WKWebExtensionContext(for: try await WKWebExtension(resourceBaseURL: folder))
             standIn.uniqueIdentifier = id
             standIn.baseURL = base
@@ -1016,7 +1016,7 @@ final class Extensions: NSObject, ObservableObject {
     }
 
     /// Settings › General › Home page: one extension's page in new tabs, or
-    /// nil for Search's own. Every other one that asks is answered no, so
+    /// nil for Tabs' own. Every other one that asks is answered no, so
     /// none of them puts its page back in by asking again.
     func setNewTabPage(_ id: String?) {
         for item in newTabAskers {
@@ -1200,7 +1200,7 @@ final class Extensions: NSObject, ObservableObject {
 
     /// Files on this Mac aren't an extension's to reach either, whatever its
     /// manifest names: Chrome keeps them from every extension until "Allow
-    /// access to file URLs" is turned on for it, and Search has no such
+    /// access to file URLs" is turned on for it, and Tabs has no such
     /// switch. WebKit's <all_urls> leaves file: out; a pattern naming it
     /// (file:///*) would be granted with the rest.
     nonisolated static func reachesFiles(_ pattern: WKWebExtension.MatchPattern) -> Bool {
@@ -1363,7 +1363,7 @@ final class Extensions: NSObject, ObservableObject {
 
     func ask(install name: String, wants: [String], icon: NSImage?, updating: Bool = false) async -> Bool {
         await ask(
-            "Add “\(name)” to Search?",
+            "Add “\(name)” to Tabs?",
             detail: wants.isEmpty ? "It doesn't ask for anything special." : "It will be able to:\n• " + wants.joined(separator: "\n• "),
             icon: icon, yes: "Add Extension", no: "Cancel", updating: updating
         )
@@ -1381,7 +1381,7 @@ final class Extensions: NSObject, ObservableObject {
         let name = context.webExtension.displayName ?? "An extension"
         return await ask(
             "“\(name)” wants to record your screen or a window.",
-            detail: "macOS will ask what to share. Search remembers your answer for \(name); Settings › Extensions takes it back.",
+            detail: "macOS will ask what to share. Tabs remembers your answer for \(name); Settings › Extensions takes it back.",
             icon: context.webExtension.icon(for: CGSize(width: 64, height: 64)), yes: "Continue", no: "Don't Allow")
     }
 
@@ -1531,7 +1531,7 @@ final class Extensions: NSObject, ObservableObject {
         }
         // A popup is opened here, straight away. Left to WebKit, it builds
         // a popup of its own first, and closing that one in favour of
-        // Search's lost the new popup's first messages to its worker.
+        // Tabs' lost the new popup's first messages to its worker.
         if context.action(for: tab)?.presentsPopup == true, let url = popupURL(for: context) {
             ExtensionPopup.shared.show(url, for: context, from: anchor(for: id))
             return
@@ -1763,7 +1763,7 @@ extension Extensions: WKWebExtensionControllerDelegate {
         }
         let id = extensionContext.uniqueIdentifier, host = applicationIdentifier!
         // WebKit's nativeMessaging is granted to every extension, for the
-        // line to Search above; an app on this Mac only to one whose
+        // line to Tabs above; an app on this Mac only to one whose
         // manifest asks for it, as in Chrome.
         guard Extensions.asksForNative(extensionContext) else {
             throw ExtensionNative.Refused(why: "Access to native messaging requires the nativeMessaging permission.")

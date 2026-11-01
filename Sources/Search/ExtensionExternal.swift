@@ -43,7 +43,7 @@ enum ExtensionExternal {
     /// with a dot in it, which fails closed where Chrome reads the public
     /// suffix list. Google's sites are left out too: a page there with a
     /// partial `chrome` and a Safari name is what its sign-in and reCAPTCHA
-    /// look for to turn a browser away, the reason Search keeps its own
+    /// look for to turn a browser away, the reason Tabs keeps its own
     /// names out of pages (and nothing that needs this lives there).
     nonisolated static func allowed(_ pattern: String) -> Bool {
         guard let start = pattern.range(of: "://") else { return false }

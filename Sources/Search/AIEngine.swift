@@ -3,7 +3,7 @@ import Foundation
 
 // "On this Mac": the model runs here, in a small program of its own (the
 // engine, Engine/search-ai-engine.cpp), and nothing about the page leaves
-// the Mac. Neither the engine nor the model is in Search — a browser of a
+// the Mac. Neither the engine nor the model is in Tabs — a browser of a
 // few megabytes stays one — they are downloaded when you turn this on: the
 // engine as the signed feed offers it (Updater), the model from the one
 // address and the one file pinned below.
@@ -16,14 +16,14 @@ import Foundation
 //   - the model's size and SHA-256 are pinned here, and checked on the very
 //     file the engine gets: Search opens it, hashes what it opened, and hands
 //     that open file over (descriptor 3), so another file can't be put in its
-//     place. (Something already able to write to Search's folder could still
+//     place. (Something already able to write to Tabs' folder could still
 //     change the file itself afterwards; what it reaches then is the engine,
 //     inside its sandbox.) The engine can read nothing else;
 //   - the engine is started suspended, checked again as the process it now
 //     is — its signature, identifier and entitlements, as the system loaded
 //     them, so a file swapped after the first check is caught — and only
-//     then let run, answerable for itself rather than as Search.
-// It is started with nothing of Search's: no other descriptor, no
+//     then let run, answerable for itself rather than as Tabs.
+// It is started with nothing of Tabs': no other descriptor, no
 // environment. It is stopped after five idle minutes, giving its memory back.
 
 @MainActor
@@ -338,9 +338,9 @@ final class AIEngine: ObservableObject {
         posix_spawn_file_actions_adddup2(&actions, fromEngine.fileHandleForWriting.fileDescriptor, 1)
         posix_spawn_file_actions_adddup2(&actions, null, 2)
         posix_spawn_file_actions_adddup2(&actions, modelFD, 3)
-        // Only those four: nothing else Search has open goes with it. Held
+        // Only those four: nothing else Tabs has open goes with it. Held
         // before its first instruction, to be checked as it is loaded; and
-        // answerable for itself, not as Search, with anything macOS asks.
+        // answerable for itself, not as Tabs, with anything macOS asks.
         posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_START_SUSPENDED))
         if let disclaim = AIEngine.disclaim { _ = disclaim(&attributes, 1) }
         let arguments = [engine.path, "--context", "8192"]

@@ -24,7 +24,7 @@ import WebKit
 //
 // Off unless turned on in Settings › Appearance, and only ever while the
 // frame is dark. ⇧⌘D turns it off, or on, for the site you're on, and is
-// kept; ⌥⇧⌘D pauses it everywhere until pressed again or Search quits.
+// kept; ⌥⇧⌘D pauses it everywhere until pressed again or Tabs quits.
 
 @MainActor
 final class Dusk: ObservableObject {
@@ -35,7 +35,7 @@ final class Dusk: ObservableObject {
         didSet { if on != oldValue { revision += 1 } }
     }
 
-    /// For now, not for good: forgotten when Search quits.
+    /// For now, not for good: forgotten when Tabs quits.
     @Published private(set) var paused = false
 
     /// Bumped whenever what the open pages should show has changed, for

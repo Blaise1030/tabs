@@ -16,7 +16,7 @@ struct Page: View {
     var holdsPage = true
     /// The page's corners, as a card on the window's frame (see CardEdge).
     var corner: CGFloat = 0
-    /// The window, for a tab showing one of Search's own pages, which are
+    /// The window, for a tab showing one of Tabs' own pages, which are
     /// drawn here in the web page's place (see InternalPages.swift).
     var browser: Browser?
 
@@ -348,7 +348,7 @@ final class StageView: NSView {
     /// A key the page didn't use, stopped here. WebKit gives such a key back
     /// to the view's superclass, which walks it up from the page, and the
     /// page's own view never sees it again: nothing in PageView is asked.
-    /// Nothing above a page wants a plain key either, since Search's own are
+    /// Nothing above a page wants a plain key either, since Tabs' own are
     /// taken by the window's key monitor before the page sees them and the
     /// menus take theirs as key equivalents, so it goes all the way up and
     /// falls off the end of the responder chain, where macOS plays its

@@ -11,14 +11,14 @@ import Security
 // site's accounts: AuthenticationServices hands an app only its own
 // associated domains' passwords, and WebKit's AutoFill is Safari's. What
 // Apple gives other browsers is a helper its Chrome extension talks to over
-// native messaging. Search runs that helper itself, as Chrome would, and
+// native messaging. Tabs runs that helper itself, as Chrome would, and
 // speaks the extension's protocol (ApplePasswordsProtocol.swift):
 //
-// - The helper only answers Apple's extension ids, so Search gives the
+// - The helper only answers Apple's extension ids, so Tabs gives the
 //   Chrome extension's. That is the unofficial part, and why this is off
 //   unless turned on in Settings › Passwords.
 // - Pairing is your doing: Connect… starts it, the helper shows its own
-//   six-digit code, you type it into Search. The key it yields lives in
+//   six-digit code, you type it into Tabs. The key it yields lives in
 //   memory only and dies with the helper; next launch asks for a code again,
 //   as the extension does. Nothing about it is written anywhere.
 // - Only names are asked for, when the caret is in a sign-in box on an https
@@ -223,7 +223,7 @@ final class ApplePasswords: ObservableObject {
     }
 
     /// Back to nothing: the helper told goodbye and stopped, every secret
-    /// dropped. Also when the switch goes off and when Search quits.
+    /// dropped. Also when the switch goes off and when Tabs quits.
     func disconnect() {
         if let link {
             try? link.send(AppleMessages.end())
@@ -367,10 +367,10 @@ final class ApplePasswords: ObservableObject {
         switch error {
         case let error as Unavailable: return error.errorDescription ?? "Apple Passwords isn't available"
         case ApplePasswordsError.timedOut: return "Apple's Passwords helper didn't answer"
-        case ApplePasswordsError.gone: return "Apple's Passwords helper wouldn't run for this copy of Search"
+        case ApplePasswordsError.gone: return "Apple's Passwords helper wouldn't run for this copy of Tabs"
         case ApplePasswordsError.notTheHelper: return "The pairing couldn't be checked. Connect again."
         case ApplePasswordsError.badHello, ApplePasswordsError.malformed:
-            return "Apple's Passwords helper answered in a way Search doesn't know"
+            return "Apple's Passwords helper answered in a way Tabs doesn't know"
         default: return "Apple Passwords isn't available on this Mac"
         }
     }
@@ -386,7 +386,7 @@ final class ApplePasswords: ObservableObject {
         return host
     }
 
-    /// Only accounts kept for this site, as Search's own are matched: the
+    /// Only accounts kept for this site, as Tabs' own are matched: the
     /// host, or anything sharing its registrable domain. The helper may know
     /// wider ties (a company's several domains); those are not offered.
     /// `wide` false: the host alone, for a box that only might be a sign-in's.

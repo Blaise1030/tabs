@@ -239,7 +239,7 @@ enum Browsers {
     // MARK: - kept away
 
     /// A launch made for a link's small window keeps every browser window
-    /// off screen until one is wanted: Open in Search, another link, the
+    /// off screen until one is wanted: Open in Tabs, another link, the
     /// Dock icon or ⌘N (see Links.little). Put away, never closed: a window
     /// closed while another is open is retired (see closing), its tabs out
     /// of the session and windows.json, and a launch with several windows

@@ -6,7 +6,7 @@ import WebKit
 
 // Translate Page, on this Mac only (idea 131).
 //
-// A script in Search's own world — never the page's — reads the page's
+// A script in Tabs' own world — never the page's — reads the page's
 // words: text, and the title, alt, placeholder and aria-label attributes,
 // in the page, its open shadow roots and every frame, other sites' frames
 // included (each frame gets the script of its own, see TranslateRelay).
@@ -70,7 +70,7 @@ final class PageTranslator {
         Locale.Language(identifier: Locale.preferredLanguages.first ?? "en")
     }
 
-    /// A language as Search's menus name it ("French"): in English, as the
+    /// A language as Tabs' menus name it ("French"): in English, as the
     /// rest of the interface is.
     nonisolated static func name(_ code: String) -> String {
         let english = Locale(identifier: "en")
@@ -546,7 +546,7 @@ final class PageTranslator {
 
     static let restoreCall = "return window.__searchTr ? __searchTr.restore() : 0"
 
-    /// The script each frame gets once, in Search's world. Only text node
+    /// The script each frame gets once, in Tabs' world. Only text node
     /// values and four attributes are ever written, and each original is
     /// kept beside it.
     static let script = #"""

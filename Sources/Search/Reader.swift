@@ -88,7 +88,7 @@ enum Reader {
     /// The page's own stylesheets go first. Left in, they reach the reading
     /// page through every rule written for a bare element (Tailwind's reset
     /// took the numbers off every list) and every font the page loaded.
-    /// Search's own stay: each has an `office-` id, and Dusk and Find on Page
+    /// Tabs' own stay: each has an `office-` id, and Dusk and Find on Page
     /// keep theirs in adoptedStyleSheets, which are left as they are. Done
     /// once, as reading mode opens; a page that adds a sheet back later keeps
     /// it, because a watcher that took it away again would fight any

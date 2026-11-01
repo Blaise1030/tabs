@@ -22,7 +22,7 @@ final class ExtensionOffscreen: NSObject, WKNavigationDelegate, WKUIDelegate, WK
         preferences.inactiveSchedulingPolicy = .throttle
         // One made to record from the microphone may start while nobody sees
         // it, as in Chrome: WebKit would otherwise hold the request until the
-        // page is on screen, which this one never is. Search still asks first,
+        // page is on screen, which this one never is. Tabs still asks first,
         // and the pill says it is listening.
         if reasons.contains("USER_MEDIA") { ExtensionCapture.set("_setGetUserMediaRequiresFocus:", false, in: preferences) }
         configuration.preferences = preferences
@@ -261,7 +261,7 @@ final class ExtensionOffscreen: NSObject, WKNavigationDelegate, WKUIDelegate, WK
         browser.askedForCapture(webView, origin: origin, frame: frame, type: type, decisionHandler: decisionHandler)
     }
 
-    /// Recording the screen: only Search's own call (ExtensionCapture), with
+    /// Recording the screen: only Tabs' own call (ExtensionCapture), with
     /// the page lent to the pill; never the extension's on its own.
     @objc(_webView:requestDisplayCapturePermissionForOrigin:initiatedByFrame:withSystemAudio:decisionHandler:)
     func displayCapture(_ web: WKWebView, origin: WKSecurityOrigin, frame: WKFrameInfo, systemAudio: Bool,

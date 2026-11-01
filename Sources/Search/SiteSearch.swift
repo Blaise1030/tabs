@@ -156,7 +156,7 @@ enum SiteSearch {
         return kept
     }
 
-    /// What a page's `<link rel="search">` asks, in Search's own world: the
+    /// What a page's `<link rel="search">` asks, in Tabs' own world: the
     /// description's address, only on the page's own site and over https.
     static let lookup = """
     (function () {

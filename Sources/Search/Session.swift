@@ -18,7 +18,7 @@ enum Session {
         /// A pin's identity, the same in every window (see Pins.swift).
         var pinID: UUID? = nil
         /// When you last left the tab, so tabs that close themselves count
-        /// the night Search was quit (see Closing.swift). Nil in sessions
+        /// the night Tabs was quit (see Closing.swift). Nil in sessions
         /// written before then: those tabs start counting at launch.
         var touched: Date? = nil
         /// When it was last let go of (Tab.letGo). Nil when it never was.

@@ -49,7 +49,7 @@ final class ExtensionPopup: NSObject, WKUIDelegate, WKNavigationDelegate, NSPopo
         browser.askedForCapture(webView, origin: origin, frame: frame, type: type, decisionHandler: decisionHandler)
     }
 
-    /// Recording the screen from the popup: only Search's own call
+    /// Recording the screen from the popup: only Tabs' own call
     /// (ExtensionCapture), never the extension's on its own.
     @objc(_webView:requestDisplayCapturePermissionForOrigin:initiatedByFrame:withSystemAudio:decisionHandler:)
     func displayCapture(_ web: WKWebView, origin: WKSecurityOrigin, frame: WKFrameInfo, systemAudio: Bool,

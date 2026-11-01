@@ -5,7 +5,7 @@ import Foundation
 /// switch (Drice, 25 Oct). Apple Passwords stays off until it is clicked.
 ///
 /// Offered sparingly, and remembered so it stays that way:
-/// - only where Search keeps no account of its own for the site, so it never
+/// - only where Tabs keeps no account of its own for the site, so it never
 ///   pushes in front of an account you already have;
 /// - at most once per site (its registrable domain), whatever happens then;
 /// - never again once it has gone unanswered twice in all, or once its ✕
@@ -52,7 +52,7 @@ struct ApplePasswordsOffer {
         var frameHost: String? = nil
         /// A box that goes with a password, not one for passkeys alone.
         var passwords = true
-        /// How many accounts Search keeps for the site.
+        /// How many accounts Tabs keeps for the site.
         var kept = 0
     }
 

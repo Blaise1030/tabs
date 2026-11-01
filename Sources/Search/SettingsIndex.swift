@@ -85,11 +85,17 @@ enum SettingsIndex {
         .init(id: "passwords", page: .passwords, title: "Your passwords", icon: "key"),
         .init(id: "apple", page: .passwords, title: "Apple Passwords", icon: "lock.rectangle.stack"),
 
+        .init(id: "agents", page: .agents, title: "Agents", icon: "point.3.connected.trianglepath.dotted"),
+
         .init(id: "blocking", page: .privacy, title: "Blocking", icon: "shield"),
         .init(id: "permissions", page: .privacy, title: "Site permissions", icon: "checkmark.shield"),
         .init(id: "clear", page: .privacy, title: "Clear", icon: "trash"),
 
         .init(id: "mouse", page: .keyboard, title: "Mouse and trackpad", icon: "computermouse"),
+
+        .init(id: "terminaltext", page: .terminal, title: "Text", icon: "textformat"),
+        .init(id: "terminaltyping", page: .terminal, title: "Typing", icon: "keyboard"),
+        .init(id: "terminalcolors", page: .terminal, title: "Colours", icon: "paintpalette"),
 
         .init(id: "updates", page: .about, title: "Updates", icon: "arrow.triangle.2.circlepath"),
         .init(id: "developer", page: .about, title: "Developer", icon: "hammer"),
@@ -111,7 +117,7 @@ enum SettingsIndex {
               more: "From another browser on this Mac, or from a file it exported. Nothing leaves your Mac.",
               words: ["import", "chrome", "safari", "arc", "migrate"]),
         .init(id: "quit.confirm", group: "browser", icon: "power",
-              title: "Confirm before quitting", detail: "Ask before ⌘Q or Quit Search closes the browser",
+              title: "Confirm before quitting", detail: "Ask before ⌘Q or Quit Tabs closes the browser",
               keys: ["quit.confirm"], words: ["quit", "cmd q"]),
         .init(id: "downloads.folder", group: "downloads", icon: "folder",
               title: "Save to", detail: "", keys: ["downloads"], words: ["download folder"]),
@@ -192,7 +198,7 @@ enum SettingsIndex {
               keys: ["tabs.sleep", SleepPace.key], words: ["memory", "discard", "suspend", "ram"], kind: .wide),
         .init(id: "tabs.close.after", group: "memory", icon: "timer",
               title: "Close tabs you leave alone", detail: "Pinned, named and grouped tabs stay. ⇧⌘T brings one back",
-              more: "Counted from when you last left the tab, while Search is quit too. Private tabs, sound, calls and anything typed stay.",
+              more: "Counted from when you last left the tab, while Tabs is quit too. Private tabs, sound, calls and anything typed stay.",
               keys: ["tabs.close.after"], words: ["auto close", "archive", "clean up"]),
         .init(id: "tabs.shortcuts", group: "tabbar", icon: "command",
               title: "Show tab numbers while ⌘ is held", detail: "Which tab each ⌘1–9 selects",
@@ -214,7 +220,7 @@ enum SettingsIndex {
               title: "Site shortcuts", detail: "A word before your search sends it to that site: \"yt cats\"",
               keys: ["search.keywords"], words: ["keyword", "bang"]),
         .init(id: "links.little", group: "links", icon: "rectangle.on.rectangle",
-              title: "Open links from other apps in a small window", detail: "To read and close, or keep with Open in Search (⌘O)",
+              title: "Open links from other apps in a small window", detail: "To read and close, or keep with Open in Tabs (⌘O)",
               keys: ["links.little"], words: ["little arc", "mini window"]),
         .init(id: "reader.twins", group: "reading", icon: "doc.text",
               title: "Read the site's own Markdown", detail: "When a page has a Markdown copy, reading mode shows that",
@@ -225,8 +231,8 @@ enum SettingsIndex {
               more: "A small switch in its corner makes an article light, dark or as the window is, kept for the next one.",
               keys: ["reader.follows"], words: ["reader", "dark"]),
         .init(id: "float.style", group: "video", icon: "pip",
-              title: "The floating video", detail: "Search's own window, or macOS's picture in picture",
-              more: "Search's window floats a video without a click and keeps its page alive in it. Picture in picture is the one Safari uses, with the system's controls.",
+              title: "The floating video", detail: "Tabs' own window, or macOS's picture in picture",
+              more: "Tabs' window floats a video without a click and keeps its page alive in it. Picture in picture is the one Safari uses, with the system's controls.",
               keys: ["float.style"], words: ["pip", "picture in picture", "mini player"]),
         .init(id: "float.own", group: "video", icon: "pip.exit",
               title: "Float the video on its own", detail: "A playing video comes out when you leave its tab, or Search",
@@ -264,7 +270,7 @@ enum SettingsIndex {
               words: ["profile", "accounts", "work", "personal"]),
         .init(id: "pins.keep", group: "pins", icon: "pin.circle",
               title: "Pins keep their site", detail: "Links elsewhere open over the pin, and ⌘W takes it back home",
-              more: "As in Arc and Safari: a link from a pin to another site opens in a peek over it, and a pin closed with ⌘W, or left open when Search quits, comes back at the page it was pinned at.",
+              more: "As in Arc and Safari: a link from a pin to another site opens in a peek over it, and a pin closed with ⌘W, or left open when Tabs quits, comes back at the page it was pinned at.",
               keys: ["pins.home", "pins.peek"], words: ["pinned tabs", "go home", "reset pin"]),
         .init(id: "pins.list", group: "pins", icon: "list.bullet.rectangle",
               title: "Pinned rows", detail: "Pins as rows under the squares, and Clear over the rest",
@@ -295,8 +301,16 @@ enum SettingsIndex {
               keys: ["passkeys"], words: ["webauthn", "touch id"]),
         .init(id: "passwords.apple", group: "apple", icon: "applelogo",
               title: "Passwords from Apple's Passwords app", detail: "Your Passwords app's accounts under the sign-in box. Unofficial",
-              more: "Search talks to the helper Apple made for its Chrome extension, as that extension. Never in private tabs.",
+              more: "Tabs talks to the helper Apple made for its Chrome extension, as that extension. Never in private tabs.",
               keys: ["passwords.apple"], words: ["icloud keychain", "apple"]),
+
+        // Agents
+        .init(id: "agents.providers", group: "agents", icon: "terminal",
+              title: "Agent providers", detail: "The agents New Agent offers, and the commands each starts and resumes with",
+              more: "Name, startup command, resume command and ACP command, as tabsh's web app keeps them. ACP powers chat cards; a terminal card uses the startup command.",
+              words: ["claude", "codex", "cursor", "gemini", "opencode", "acp", "startup", "resume",
+                      "command", "provider", "agent"],
+              kind: .note, findOnly: true),
 
         // Privacy
         .init(id: "shield", group: "blocking", icon: "shield.lefthalf.filled",
@@ -393,6 +407,22 @@ enum SettingsIndex {
         .init(id: "note.flick", group: "video", icon: "hand.raised.fingers.spread",
               title: "Flick the floating video to a corner", detail: "Always there: two fingers send it to the corner they point at",
               keys: ["float.flicks"], words: ["flick", "corner"], kind: .note, findOnly: true),
+        // Terminal
+        .init(id: "terminal.font", group: "terminaltext", icon: "textformat",
+              title: "Font", detail: "The typeface the terminal draws in. Fixed-width faces only",
+              keys: ["terminal.font"], words: ["terminal", "font", "monospace", "typeface"]),
+        .init(id: "terminal.size", group: "terminaltext", icon: "textformat.size",
+              title: "Size", detail: "The terminal's text size, in points",
+              keys: ["terminal.size"], words: ["terminal", "font size", "text size"]),
+        .init(id: "terminal.sounds", group: "terminaltyping", icon: "waveform",
+              title: "Typing sounds", detail: "Key presses in the editor, terminal and agent chat",
+              keys: ["typingSound"], words: ["keyboard", "sound", "typing", "clack", "switch"]),
+        .init(id: "terminal.light", group: "terminalcolors", icon: "sun.max",
+              title: "Light theme", detail: "The terminal's colours while the browser is light",
+              keys: ["terminal.lightTheme"], words: ["terminal", "theme", "light", "colours"]),
+        .init(id: "terminal.dark", group: "terminalcolors", icon: "moon",
+              title: "Dark theme", detail: "The terminal's colours while the browser is dark",
+              keys: ["terminal.darkTheme"], words: ["terminal", "theme", "dark", "colours"]),
     ] as [SettingsItem]).filter(offered)
 
     /// Rows for a feature this Mac's WebKit doesn't have aren't listed at
@@ -442,7 +472,7 @@ enum SettingsIndex {
     /// What a dimmed dependent row says instead of its own line.
     static func needs(_ item: SettingsItem) -> String {
         switch item.id {
-        case "pages.dusk": return "Only while Search isn't set to Light"
+        case "pages.dusk": return "Only while Tabs isn't set to Light"
         case "toolbar.left": return "Only with the tabs across the top"
         case "sidebar.roomy": return "Only with titles in the column"
         default: return "Only with the tabs down a side"

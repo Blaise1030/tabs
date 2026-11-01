@@ -6,7 +6,7 @@ import Combine
 // there is nothing else to learn and nothing else to press.
 
 @main
-struct SearchApp: App {
+struct TabsApp: App {
     /// The window in front's browser, for the menus (see Windows.swift).
     @StateObject private var front = Front.shared
     /// Your own keys (Settings › Shortcuts): the menus are drawn again when
@@ -39,7 +39,7 @@ struct SearchApp: App {
         // shares, and a probe resized for a test once changed the size the
         // real window came back at. The other windows' frames are in
         // windows.json (see Windows.swift).
-        Window("Search", id: Browsers.sceneID) {
+        Window("Tabs", id: Browsers.sceneID) {
             SceneRoot(slot: SceneSlot.shared)
                 .frame(minWidth: 640, minHeight: 420)
         }
@@ -65,6 +65,10 @@ struct SearchApp: App {
                 }
                 Button("New Tab") { browser.launch() }
                     .shortcut("file.newTab")
+                Button("New Terminal Tab") { browser.newTerminal() }
+                    .shortcut("file.newTerminal")
+                Button("New Agent…") { browser.show(InternalPage(.agentComposer)) }
+                    .shortcut("file.newAgent")
                 Button("New Private Tab") { browser.newShyTab() }
                     .shortcut("file.newPrivateTab")
                 Button(browser.reopenTitle) { browser.reopen() }
@@ -73,6 +77,8 @@ struct SearchApp: App {
                 Divider()
                 Button("Open Address…") { browser.edit() }
                     .shortcut("file.openAddress")
+                Button("Open File in Editor…") { browser.openEditor() }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
                 Divider()
                 // Another browser's bookmarks, history, passwords and the
                 // rest, as Safari's File › Import From: the one sheet every
@@ -371,12 +377,12 @@ struct SearchApp: App {
     }
 }
 
-/// Quit Search, which can ask first (Settings › General), and Help. One
+/// Quit Tabs, which can ask first (Settings › General), and Help. One
 /// value, because a scene's commands take at most ten.
 private struct QuitAndHelp: Commands {
     var body: some Commands {
         CommandGroup(replacing: .appTermination) {
-            Button("Quit Search") {
+            Button("Quit Tabs") {
                 if Links.shouldQuit() { NSApp.terminate(nil) }
             }
             .keyboardShortcut("q", modifiers: .command)
@@ -474,7 +480,9 @@ struct ContentView: View {
             // that survives the transition is not a white band across the top.
             // With the tabs down the side, the ground the page's card and the
             // column sit on (see CardEdge).
-            (fullscreenTab != nil ? Color.black : cards ? Palette.frame : Palette.ground)
+            (fullscreenTab != nil ? Color.black
+                : browser.chromeTheme.map { Color(nsColor: $0.color) }
+                    ?? (cards ? Palette.frame : Palette.ground))
 
             // One stage, always. It starts beside the column and under the
             // strip, not behind them — a page sliding beneath floating chrome
@@ -533,6 +541,7 @@ struct ContentView: View {
         .background { GeometryReader { geo in Color.clear.onAppear { across = geo.size.width }
             .onChange(of: geo.size.width) { _, width in across = width } } }
         .animation(Motion.glide, value: browser.prefs.sidebar)
+        .animation(Motion.settle, value: browser.chromeTheme)
         .animation(Motion.glide, value: browser.prefs.sidePosition)
         .onAppear { if room == nil { room = chrome } }
         .onChange(of: chrome) { old, new in make(room: new, after: old) }
@@ -579,7 +588,7 @@ struct ContentView: View {
                 }
                 .animation(Motion.quick, value: browser.applePairing)
         } else {
-            Palette.ground
+            browser.chromeTheme.map { Color(nsColor: $0.color) } ?? Palette.ground
         }
     }
 
@@ -899,7 +908,7 @@ struct ContentView: View {
         guard !browser.fieldShowing, browser.editingTab == nil else { return }
         DispatchQueue.main.async {
             guard !browser.fieldShowing, browser.editingTab == nil else { return }
-            // Search's own pages have no web view to hand the keys to.
+            // Tabs' own pages have no web view to hand the keys to.
             guard browser.active?.page == nil, let web = browser.active?.web, let window = web.window else { return }
             if let responder = window.firstResponder as? NSView,
                responder === web || responder.isDescendant(of: web) { return }
@@ -1177,10 +1186,10 @@ struct ContentView: View {
             // Escape in a full-screen window included.
             if browser.holdKey(event) { return nil }
             // Escape in this window while it is itself in macOS full screen
-            // (the green button, ⌃⌘F). Nothing in Search wanting it, it went
+            // (the green button, ⌃⌘F). Nothing in Tabs wanting it, it went
             // on through the page to AppKit, which takes the window out of
             // full screen on it: one press, whatever it was meant for. With
-            // Esc twice asked for, Search's own Escape jobs still go first and
+            // Esc twice asked for, Tabs' own Escape jobs still go first and
             // at one press — the find bar, the address field, a peek, a panel,
             // a rename, a new tab never sent anywhere, the ⌃Tab switcher —
             // and a press none of them wants is kept from the page and from
@@ -1234,22 +1243,22 @@ struct ContentView: View {
     static var keyHooks: [ObjectIdentifier: (NSEvent) -> NSEvent?] = [:]
 
     /// The last key handed to the page before Search acted on it (see
-    /// `pageFirst`): if WebKit sends it back unused, it is Search's.
+    /// `pageFirst`): if WebKit sends it back unused, it is Tabs'.
     private static var passed: NSEvent?
 
     /// A key a page may want for itself — ⌘K in Slack, ⌘F in a Google Doc,
     /// ⌘S in an editor — goes to the page first, as it does in Chrome, and is
-    /// Search's only if the page leaves it unused: WebKit then sends the same
+    /// Tabs' only if the page leaves it unused: WebKit then sends the same
     /// event back through the app, and it comes here a second time. Only
     /// while the page has the keyboard; in the address field or a panel,
-    /// Search's keys are Search's. The keys that make and close tabs and move
-    /// between them stay Search's first, as Chrome keeps them its own.
+    /// Tabs' keys are Tabs'. The keys that make and close tabs and move
+    /// between them stay Tabs' first, as Chrome keeps them its own.
     ///
-    /// ⌘K is always Search's, on every page: the way to any open page is
+    /// ⌘K is always Tabs', on every page: the way to any open page is
     /// the one key that must never be taken (Drice; #238). Slack, X, GitHub
     /// and ChatGPT use it themselves, and given it first they kept it.
     ///
-    /// ⌘← and ⌘→ are Search's too while nothing is being typed: WebKit takes
+    /// ⌘← and ⌘→ are Tabs' too while nothing is being typed: WebKit takes
     /// them to scroll the page sideways and never hands them back, so
     /// passing them on left them dead for going back and forward (#324).
     private func pageFirst(_ event: NSEvent, key: String, shifted: Bool) -> Bool {
@@ -1697,7 +1706,7 @@ private struct TabImmersionWatch: View {
 /// The update command, as the updater stands: Check for Updates…, Install
 /// Update when installing on its own is off, Download Update… when it
 /// couldn't install itself, Restart to Update once a newer build is in place.
-/// Its own view, so only the updater's changes redraw it (see SearchApp.body).
+/// Its own view, so only the updater's changes redraw it (see TabsApp.body).
 private struct UpdateMenuItem: View {
     @ObservedObject private var updater = Updater.shared
 
