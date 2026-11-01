@@ -112,10 +112,67 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/$NAME"
 # SwiftPM's resource bundle (the typing sounds, see TypingSounds.swift).
-# Bundle.module looks for it in Contents/Resources.
+# Typed as Contents/Resources so the app's own loader finds it. Foundation
+# only opens a real bundle (Contents/Info.plist). The v1.0.8 CI build shipped
+# a flat `Sounds/` folder here, and SwiftPM's Bundle.module still looked at
+# the .app root / a hardcoded runner path — so every launch died. TypingSounds
+# no longer calls Bundle.module; this still has to be a loadable bundle.
 RESOURCE_BUNDLE="$(dirname "$BINARY")/Search_Search.bundle"
+DEST_BUNDLE="$APP/Contents/Resources/Search_Search.bundle"
 if [ -d "$RESOURCE_BUNDLE" ]; then
-  cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/"
+  cp -R "$RESOURCE_BUNDLE" "$DEST_BUNDLE"
+fi
+# Some SwiftPM layouts leave the copied resources at the bundle root
+# instead of under Contents/Resources. Wrap that into a real bundle so
+# a release never ships one that can't open.
+if [ -d "$DEST_BUNDLE" ] && [ ! -f "$DEST_BUNDLE/Contents/Info.plist" ]; then
+  echo "tabsh: repairing Search_Search.bundle (missing Contents/Info.plist)" >&2
+  REPAIR="$(mktemp -d)/Search_Search.bundle"
+  mkdir -p "$REPAIR/Contents/Resources"
+  # Prefer an existing Resources tree; otherwise take the flat root (the
+  # v1.0.8 shape was just Sounds/ next to nothing).
+  if [ -d "$DEST_BUNDLE/Contents/Resources" ]; then
+    cp -R "$DEST_BUNDLE/Contents/Resources/" "$REPAIR/Contents/Resources/"
+  elif [ -d "$DEST_BUNDLE/Resources" ]; then
+    cp -R "$DEST_BUNDLE/Resources/" "$REPAIR/Contents/Resources/"
+  else
+    # Move everything that isn't a leftover Contents stub into Resources.
+    shopt -s dotglob nullglob
+    for item in "$DEST_BUNDLE"/*; do
+      base="$(basename "$item")"
+      [ "$base" = "Contents" ] && continue
+      cp -R "$item" "$REPAIR/Contents/Resources/"
+    done
+    shopt -u dotglob nullglob
+  fi
+  if [ -f "$DEST_BUNDLE/Contents/Info.plist" ]; then
+    cp "$DEST_BUNDLE/Contents/Info.plist" "$REPAIR/Contents/Info.plist"
+  elif [ -f "$DEST_BUNDLE/Info.plist" ]; then
+    cp "$DEST_BUNDLE/Info.plist" "$REPAIR/Contents/Info.plist"
+  else
+    cat > "$REPAIR/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>tabsh-browser.Search.resources</string>
+	<key>CFBundleName</key>
+	<string>Search_Search</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+</dict>
+</plist>
+PLIST
+  fi
+  rm -rf "$DEST_BUNDLE"
+  mv "$REPAIR" "$DEST_BUNDLE"
+fi
+if [ ! -f "$DEST_BUNDLE/Contents/Info.plist" ]; then
+  echo "build: Search_Search.bundle is missing Contents/Info.plist — typing sounds will not load" >&2
+  exit 1
 fi
 # The binary says which SDK it was built with, and AppKit draws the app the
 # way that SDK's macOS drew it: built with the macOS 27 SDK, a Mac on 27 gets

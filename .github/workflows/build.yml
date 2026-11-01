@@ -144,12 +144,39 @@ jobs:
           APP="$OUT/Tabs.app"
           test -x "$APP/Contents/MacOS/Tabs"
           test -x "$APP/Contents/Resources/tabsh"
+          # TypingSounds loads this as a real bundle; v1.0.8 shipped a flat
+          # Sounds/ folder here (no Contents/Info.plist).
+          test -f "$APP/Contents/Resources/Search_Search.bundle/Contents/Info.plist"
           lipo -archs "$APP/Contents/MacOS/Tabs" | grep -qx "${{ matrix.arch }}"
           lipo -archs "$APP/Contents/Resources/tabsh" | grep -qx "${{ matrix.arch }}"
           codesign --verify --deep --strict "$APP"
           test -f "$OUT/Tabs.zip"
           test -f "$OUT/Tabs.dmg"
           echo "Tabs $(tr -d '[:space:]' < VERSION), ${{ matrix.arch }}, tabsh ${{ steps.tabsh.outputs.commit }}"
+
+      # v1.0.8 reached GitHub Releases while crashing on every launch:
+      # Bundle.module looked beside the .app / at the runner's .build path.
+      # Presence checks above are not enough — actually open the app.
+      - name: Smoke-test launch
+        if: matrix.arch == 'arm64'
+        run: |
+          set -euo pipefail
+          APP="build/Tabs.app"
+          # Ad-hoc apps from CI need quarantine off or Gatekeeper may kill them.
+          xattr -dr com.apple.quarantine "$APP" || true
+          "$APP/Contents/MacOS/Tabs" &
+          PID=$!
+          cleanup() { kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true; }
+          trap cleanup EXIT
+          # Give didFinishLaunching (and TypingSounds.start) time to trap.
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if ! kill -0 "$PID" 2>/dev/null; then
+              echo "Tabs exited during launch" >&2
+              exit 1
+            fi
+            sleep 0.5
+          done
+          echo "Tabs stayed up after launch (pid $PID)"
 
       # What makes the download worth having: the daemon inside the app starts
       # and answers the endpoints the session tabs use. Its own database and

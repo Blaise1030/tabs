@@ -184,12 +184,41 @@ final class TypingSounds: ObservableObject {
     /// Four players a sample, so fast typing overlaps rather than cutting
     /// the last click short.
     nonisolated static func sampleURL(_ name: String, pack: TypingSoundPack) -> URL? {
-        Bundle.module.url(
+        resources.url(
             forResource: name,
             withExtension: "mp3",
             subdirectory: "Sounds/\(pack.rawValue)"
         )
     }
+
+    /// The typing-sound pack bundle `build.sh` puts in `Contents/Resources`.
+    ///
+    /// Do not use `Bundle.module` here. SwiftPM's generated accessor for an
+    /// executable still looks beside the `.app` (and at a hardcoded CI
+    /// `.build` path) — never in `Contents/Resources` — and `fatalError`s
+    /// when both miss. That is why the v1.0.8 DMG died on every launch
+    /// (`could not load resource bundle: from …/Tabs.app/Search_Search.bundle
+    /// or /Users/runner/work/…`). Resolve the packaged location ourselves;
+    /// if it is missing, typing is simply quiet.
+    nonisolated private static let resources: Bundle = {
+        let name = "Search_Search.bundle"
+        var candidates: [URL] = []
+        if let resources = Bundle.main.resourceURL {
+            candidates.append(resources.appendingPathComponent(name))
+        }
+        candidates.append(Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Resources/\(name)"))
+        // `swift run` / a bare `.build` binary: the bundle sits next to the
+        // executable, which is also `Bundle.main.bundleURL` for a tool.
+        candidates.append(Bundle.main.bundleURL.appendingPathComponent(name))
+        if let folder = Bundle.main.executableURL?.deletingLastPathComponent() {
+            candidates.append(folder.appendingPathComponent(name))
+        }
+        for url in candidates {
+            if let bundle = Bundle(url: url) { return bundle }
+        }
+        return Bundle.main
+    }()
 
     private func players(_ name: String, pack: TypingSoundPack) -> [AVAudioPlayer] {
         let key = "\(pack.rawValue)/\(name)"
