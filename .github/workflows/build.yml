@@ -85,12 +85,6 @@ jobs:
       - name: Add the Rust target for ${{ matrix.arch }}
         run: rustup target add "${{ matrix.rust_target }}"
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: .tabsh-src -> target
-          key: ${{ matrix.rust_target }}
-
       - name: Cache SwiftPM
         uses: actions/cache@v6
         with:
@@ -101,7 +95,9 @@ jobs:
           restore-keys: swiftpm-${{ matrix.arch }}-
 
       # tabsh is public, so no token is needed. A branch, tag or commit all
-      # work; the commit is printed and lands in the release notes.
+      # work; the commit is printed and lands in the release notes. Cloned
+      # before the cargo cache is restored: rust-cache makes its workspace
+      # folder if it is missing, and git won't clone into one that exists.
       - name: Get tabsh
         id: tabsh
         run: |
@@ -110,6 +106,12 @@ jobs:
           git -C .tabsh-src checkout "$TABSH_REF"
           echo "commit=$(git -C .tabsh-src rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
           git -C .tabsh-src log -1 --format='tabsh %h %s'
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .tabsh-src -> target
+          key: ${{ matrix.rust_target }}
 
       # The daemon embeds the web app (src/app-assets is committed), so no
       # pnpm or Node step is needed — just cargo.
