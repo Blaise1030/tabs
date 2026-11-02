@@ -291,6 +291,27 @@ enum Tabsh {
         var resume: String?
         var acp: String?
         var id: String { name }
+
+        /// OpenCode only resumes when the launch command named the
+        /// conversation (`ses_{session}`). Older stock entries omitted that,
+        /// so cards never got `resume_input` and a restart sat at a shell.
+        func withOpenCodeSessionMint() -> Provider {
+            let isOpenCode = name.localizedCaseInsensitiveContains("opencode")
+                || command.split(separator: " ").first.map(String.init) == "opencode"
+            guard isOpenCode else { return self }
+            if command == "opencode --prompt {prompt}" {
+                return Provider(name: name,
+                                command: "opencode --session ses_{session} --prompt {prompt}",
+                                resume: "opencode --session ses_{session}",
+                                acp: acp ?? "opencode acp")
+            }
+            if resume == "opencode --session {session}" {
+                return Provider(name: name, command: command,
+                                resume: "opencode --session ses_{session}",
+                                acp: acp)
+            }
+            return self
+        }
     }
 
     struct Settings: Decodable {
@@ -311,8 +332,11 @@ enum Tabsh {
         Provider(name: "Cursor CLI", command: "cursor-agent {prompt}",
                  resume: "cursor-agent --resume={session}",
                  acp: "cursor-agent acp"),
-        Provider(name: "opencode", command: "opencode --prompt {prompt}",
-                 resume: "opencode --session {session}",
+        // `{session}` in the launch command: tabsh names the conversation
+        // (`ses_<uuid>`), so a restart can resume without OpenCode's hooks.
+        Provider(name: "OpenCode",
+                 command: "opencode --session ses_{session} --prompt {prompt}",
+                 resume: "opencode --session ses_{session}",
                  acp: "opencode acp"),
         Provider(name: "muse", command: "muse {prompt}",
                  resume: "muse resume {session}",
@@ -332,6 +356,7 @@ enum Tabsh {
             return Provider(name: name, command: command,
                             resume: item["resume"] as? String,
                             acp: item["acp"] as? String)
+                .withOpenCodeSessionMint()
         } ?? []
         return Settings(providers: providers,
                         agentProvider: object["agentProvider"] as? String,
@@ -387,14 +412,18 @@ enum Tabsh {
     /// the New Agent card applied *before* the first prompt. The board only
     /// launches a card it was moved to In progress by the user — and it
     /// launches it with the agent's default model. So the card is moved as a
-    /// hook would move it (no launch), the chat is brought up here, its
-    /// advertised selects are set, and the prompt goes in as the first
-    /// message, which is what a handshake with no prompt is for.
-    static func createChat(cwd: String, name: String, prompt: String, provider: Provider,
+    /// hook would move it (no launch), the chat is brought up here, and its
+    /// advertised selects are set. The New Agent page sends the prompt
+    /// itself once the chat pane is open (`TabshChat.send`), so the words
+    /// show as a pending bubble and ride the same path as a typed message.
+    static func createChat(cwd: String, name: String, provider: Provider,
                            model: String?, mode: String?) async throws -> Session {
+        // No `name` on create: a named card is pinned, and ACP's
+        // `session_info_update` cannot replace a pinned title. The New Agent
+        // words are applied as an auto rename below so the header has
+        // something until the agent sends a better title.
         var body: [String: Any] = [
             "cwd": cwd,
-            "name": name,
             "mode": "ui",
             "command": provider.command,
             "resume": provider.resume ?? "",
@@ -405,6 +434,10 @@ enum Tabsh {
         let data = try await request("POST", "/api/sessions", body: body)
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let id = object["id"] as? String else { throw TabshError.malformed }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            try? await renameSession(id, name: trimmed, auto: true)
+        }
         _ = try await request("PATCH", "/api/sessions/\(id)/status",
                               body: ["status": "in_progress", "source": "hook"])
         try? await startChat(id)
@@ -432,7 +465,6 @@ enum Tabsh {
             }
         }
 
-        try await sendChatMessage(id, text: prompt)
         return Session(id: id,
                        name: object["name"] as? String ?? name,
                        status: "in_progress",
@@ -468,6 +500,15 @@ enum Tabsh {
         _ = try await request("DELETE", "/api/sessions/\(id)")
     }
 
+    /// Renames a card. `auto` is a shell or ACP title: it does not pin, so a
+    /// later agent title can still replace it. A user rename omits `auto`
+    /// (or passes false) and pins.
+    static func renameSession(_ id: String, name: String, auto: Bool = false) async throws {
+        var body: [String: Any] = ["name": name]
+        if auto { body["auto"] = true }
+        _ = try await request("PATCH", "/api/sessions/\(id)", body: body)
+    }
+
     /// The tree the explorer shows: the tab's project root (its git root,
     /// else its folder) and every path under it, directories ending in `/`.
     /// When `truncated`, `foldersOnly` means a reduced listing — folders plus
@@ -480,7 +521,26 @@ enum Tabsh {
     }
 
     static func tree(session: String) async throws -> Tree {
-        let data = try await request("GET", "/api/files/tree?session=\(session)")
+        try await tree(session: session, path: nil)
+    }
+
+    /// The explorer's listing. `path` roots at an absolute folder instead of
+    /// the session's project — used when opening a folder under a truncated
+    /// home/`/` listing without changing the shell's cwd.
+    static func tree(session: String? = nil, path: String?) async throws -> Tree {
+        var pairs: [String] = []
+        if let session, !session.isEmpty {
+            let encoded = session.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? session
+            pairs.append("session=\(encoded)")
+        }
+        if let path, !path.isEmpty {
+            let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? path
+            pairs.append("path=\(encoded)")
+        }
+        let query = pairs.isEmpty ? "/api/files/tree" : "/api/files/tree?" + pairs.joined(separator: "&")
+        // A home folder can take a moment to reduce to folders-only; five
+        // seconds left the sidebar empty with a timeout.
+        let data = try await request("GET", query, timeout: 30)
         return try JSONDecoder().decode(Tree.self, from: data)
     }
 
@@ -570,12 +630,17 @@ enum Tabsh {
 
     nonisolated static var origin: String { "http://127.0.0.1:\(TabshDaemon.port)" }
 
-    private static func request(_ method: String, _ path: String, body: [String: Any]? = nil) async throws -> Data {
+    private static func request(
+        _ method: String,
+        _ path: String,
+        body: [String: Any]? = nil,
+        timeout: TimeInterval = 5
+    ) async throws -> Data {
         guard let token = TabshDaemon.token() else { throw TabshError.noToken }
         guard let url = URL(string: path, relativeTo: base) else { throw TabshError.malformed }
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.timeoutInterval = 5
+        request.timeoutInterval = timeout
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

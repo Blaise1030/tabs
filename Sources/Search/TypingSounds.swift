@@ -54,7 +54,14 @@ final class TypingSounds: ObservableObject {
     @Published var pack: TypingSoundPack {
         didSet {
             Store.settings.set(pack.rawValue, forKey: "typingSound")
-            preload(pack)
+            // Warm the new pack off the caller's stack. Settings' picker used
+            // to set `pack` on the main thread and then stall on preload —
+            // every sample builds four AVAudioPlayers — so the menu looked
+            // stuck and the choice never seemed to take.
+            let chosen = pack
+            DispatchQueue.main.async { [weak self] in
+                self?.preload(chosen)
+            }
         }
     }
 
@@ -75,12 +82,18 @@ final class TypingSounds: ObservableObject {
         guard !started else { return }
         started = true
         preload(pack)
+        // Play after the key is delivered. The monitor runs on the main
+        // thread *before* the field sees the event: doing AVAudioPlayer work
+        // here made every character wait on audio, and the app beachballed
+        // as soon as someone typed in a terminal or the agent composer.
         down = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            self?.pressed(event)
+            let caught = event
+            DispatchQueue.main.async { self?.pressed(caught) }
             return event
         }
         up = NSEvent.addLocalMonitorForEvents(matching: [.keyUp]) { [weak self] event in
-            self?.released(event)
+            let caught = event
+            DispatchQueue.main.async { self?.released(caught) }
             return event
         }
     }
@@ -88,8 +101,12 @@ final class TypingSounds: ObservableObject {
     /// A single click, for the settings row when a pack is picked.
     func preview(_ pack: TypingSoundPack) {
         guard pack != .off else { return }
-        preload(pack)
-        play("press_key3", pack: pack)
+        let chosen = pack
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.preload(chosen)
+            self.play("press_key3", pack: chosen)
+        }
     }
 
     // MARK: - keys

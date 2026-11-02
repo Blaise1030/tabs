@@ -186,6 +186,26 @@ struct Command: Identifiable {
 
         Command("view.sidebar", "Show Tabs in Sidebar", .view, KeyCombo("s", shift: true)) { $0.toggleSidebar() },
         Command("view.fold", "Hide Sidebar or Tab Bar", .view, KeyCombo("s")) { $0.toggleFold() },
+        // Same defaults as tabsh web (`keyToggleExplorer` / `keySearchFiles`):
+        // the project column beside a terminal or agent tab.
+        Command("view.project", "Toggle Project Files", .view, KeyCombo("e", shift: true)) { browser in
+            guard browser.active?.tabshSessionID != nil else { return }
+            TabshExplorerActions.toggle()
+        },
+        Command("view.searchFiles", "Search Project Files…", .view, KeyCombo("f", shift: true)) { browser in
+            guard browser.active?.tabshSessionID != nil else { return }
+            TabshExplorerActions.searchFiles()
+        },
+        // Sessions panel magnifying glass (sidebar) — beside ⌘K Search Tabs.
+        Command("view.searchSessions", "Search Sessions…", .view, KeyCombo("k", shift: true)) { browser in
+            if !browser.prefs.sidebar {
+                withAnimation(Motion.glide) { browser.prefs.sidebar = true }
+            }
+            if browser.folded {
+                withAnimation(Motion.glide) { browser.folded = false }
+            }
+            TabshSessionSearchActions.open()
+        },
         // Every tab group of the space at once, as Arc's folders (⌥⌘[ and ⌥⌘],
         // beside ⌘[ and ⌘], which go back and forward).
         Command("view.foldGroups", "Fold All Groups", .view, KeyCombo("[", option: true)) { $0.foldAllGroups(true) },

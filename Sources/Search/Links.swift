@@ -83,6 +83,12 @@ final class Links: NSObject, NSApplicationDelegate {
         // And the bookmarks or downloads list saved a moment ago, still on
         // their way to the disk.
         Disk.drain()
+        // Drop the board socket, then stop this browser's daemon so shells
+        // and agents leave with the app (see TabshDaemon.stop).
+        MainActor.assumeIsolated {
+            TabshSessions.shared.stop()
+            TabshDaemon.shared.stop()
+        }
     }
 
     /// The nearest thing to a crash reporter a browser with no server can

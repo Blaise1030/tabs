@@ -1,6 +1,16 @@
 import AppKit
 import SwiftUI
 
+/// Opens the sessions panel search from a menu or key — same idea as
+/// `TabshExplorerActions.searchFiles` for the project column.
+enum TabshSessionSearchActions {
+    static let openName = Notification.Name("tabsh.sessions.search")
+
+    static func open() {
+        NotificationCenter.default.post(name: openName, object: nil)
+    }
+}
+
 // The daemon's cards, kept in step with the browser's tabs. A card carries
 // the title, status, note, folder and agent the board shows; its hooks move
 // the status through `/api/board/events`, and the tab wears the same glyph.
@@ -238,41 +248,50 @@ struct TabshSessionHeader<Accessory: View>: View {
                         .truncationMode(.tail)
                 }
             }
+            // Shrink first so a long title never shoves the trailing
+            // controls off the right edge (or leaves a gap past them).
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(0)
             .help(info?.tooltip ?? title)
 
-            Spacer(minLength: 10)
+            // Explorer, status select and `…` — one trailing group, always
+            // flush to the right of the bar.
+            HStack(spacing: 8) {
+                if !showingExplorer {
+                    ExplorerShowButton { showingExplorer = true }
+                }
 
-            accessory()
+                accessory()
 
-            Menu {
-                // The status is changed here, with the same list as the
-                // board's row menu; the tab's own badge shows where it is.
-                if let info, statusInMenu {
-                    TabshStatusMenuItems(current: info.state) {
-                        sessions.move(sessionID, to: $0)
+                Menu {
+                    // The status is changed here, with the same list as the
+                    // board's row menu; the tab's own badge shows where it is.
+                    if let info, statusInMenu {
+                        TabshStatusMenuItems(current: info.state) {
+                            sessions.move(sessionID, to: $0)
+                        }
+                        Divider()
                     }
-                    Divider()
+                    Button("Delete Session", role: .destructive) {
+                        sessions.delete(sessionID)
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Palette.muted)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
-                Button("Delete Session", role: .destructive) {
-                    sessions.delete(sessionID)
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Palette.muted)
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .help("Session actions")
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .help("Session actions")
-
-            if !showingExplorer {
-                ExplorerShowButton { showingExplorer = true }
-            }
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(1)
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -320,6 +339,28 @@ extension TabshAgentBrand {
     /// The brand's vector mark, for the tab and for a quick check that a
     /// path still loads.
     var image: NSImage? { TabshAgentMarks.image(for: self) }
+
+    /// Which mark a provider or launch command wears. Name and command are
+    /// both checked so "Cursor CLI" / `cursor-agent` and "OpenCode" /
+    /// `opencode …` land on the same glyphs as session tabs.
+    static func infer(name: String = "", command: String = "",
+                      acp: String = "") -> TabshAgentBrand {
+        let blob = [name, command, acp]
+            .map { $0.lowercased() }
+            .joined(separator: " ")
+        if blob.contains("claude") { return .claude }
+        if blob.contains("codex") || blob.contains("openai") || blob.contains("gpt") {
+            return .openai
+        }
+        if blob.contains("gemini") { return .gemini }
+        if blob.contains("opencode") { return .opencode }
+        if blob.contains("cursor")
+            || command.split(separator: " ").first.map(String.init)?.lowercased() == "agent"
+            || command.split(separator: " ").first.map(String.init)?.lowercased() == "cursor-agent" {
+            return .cursor
+        }
+        return .agent
+    }
 }
 
 struct TabshAgentMark: View {
@@ -518,20 +559,7 @@ extension Tabsh.SessionInfo {
     /// prompt's first line, so a card called "Fix the agent panel" would
     /// otherwise read as Cursor's `agent` CLI.
     var brand: TabshAgentBrand {
-        let commands = [agent, acp].compactMap { $0?.lowercased() }
-        let source = commands.joined(separator: " ")
-        if source.contains("claude") { return .claude }
-        if source.contains("codex") || source.contains("openai") || source.contains("gpt") {
-            return .openai
-        }
-        if source.contains("gemini") { return .gemini }
-        if source.contains("opencode") { return .opencode }
-        // `agent` is Cursor's CLI only as the program a command starts with.
-        if source.contains("cursor")
-            || commands.contains(where: { $0.split(separator: " ").first.map(String.init) == "agent" }) {
-            return .cursor
-        }
-        return .agent
+        TabshAgentBrand.infer(command: agent ?? "", acp: acp ?? "")
     }
 
     /// The board row's second line: the hook's note when it left one, and
@@ -573,6 +601,17 @@ extension Tabsh.SessionInfo {
         lines.append("Session: \(id)")
         return lines.joined(separator: "\n")
     }
+
+    /// Whether the sessions panel's search keeps this card: the needle
+    /// against its name, note, folder, agent and status.
+    func matches(_ needle: String) -> Bool {
+        let q = needle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return true }
+        let hay = [name, note, folder, agentName, state.title, cwd]
+            .compactMap { $0 }
+            .joined(separator: "\n")
+        return hay.localizedCaseInsensitiveContains(q)
+    }
 }
 
 // MARK: - The panel
@@ -600,16 +639,28 @@ struct TabshStatusPanel: View {
     @State private var resizing: CGFloat?
     @State private var onHandle = false
     @State private var hoveredGroup: TabshStatus?
+    /// The status a dragged session is hovering over, so its heading lights
+    /// up the way a browser tab group does while a drop is aimed at it.
+    @State private var dropTarget: TabshStatus?
     @State private var scrollOffset: CGFloat = 0
     @Environment(\.greys) private var greys
     @State private var hovered: String?
     /// The measured height of the groups and rows, so a short list does not
     /// leave the panel taller than its content.
     @State private var contentHeight: CGFloat = 0
+    /// The panel's own search: the magnifying glass under the handle opens it.
+    @State private var searching = false
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
 
     private static let handleHeight: CGFloat = 7
     private static let minimum: CGFloat = 120
     private static let maximum: CGFloat = 520
+    /// Height the open field takes in the stack, so the list is pushed down.
+    private static let searchBarHeight: CGFloat = 36
+    /// Drag payload for a session row: `tabsh-session:<id>`, so a drop on a
+    /// status heading (or another row under it) can move the card.
+    private static let dragPrefix = "tabsh-session:"
 
     private var folded: Set<TabshStatus> {
         Set(foldedStorage
@@ -618,7 +669,10 @@ struct TabshStatusPanel: View {
     }
 
     private var cards: [Tabsh.SessionInfo] {
-        Self.listed(Array(sessions.sessions.values))
+        let all = Self.listed(Array(sessions.sessions.values))
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return all }
+        return all.filter { $0.matches(needle) }
     }
 
     /// The cards the panel lists: agent sessions only. A plain terminal is a
@@ -640,7 +694,11 @@ struct TabshStatusPanel: View {
     /// tab list and the sessions is the person's to place, and a short list
     /// must not nail it shut. See `panelHeight`.
     private var expandedHeight: CGFloat {
-        Self.panelHeight(stored: storedHeight, byHand: byHand, content: contentHeight)
+        // The closed icon is absolute and takes no height; the open field
+        // sits in the stack and pushes the list down.
+        let search = searching ? Self.searchBarHeight : 0
+        return Self.panelHeight(stored: storedHeight, byHand: byHand,
+                                content: contentHeight + search)
     }
 
     /// The panel's height. `byHand` is the one thing the numbers can't say:
@@ -667,20 +725,49 @@ struct TabshStatusPanel: View {
         // No heading of its own: the cards start at the handle, and the
         // column's foot carries the one chevron that folds them away (see
         // SideFoot), so the list has the whole panel to itself.
-        if cards.isEmpty || collapsed {
-            EmptyView()
-        } else {
-            VStack(spacing: 0) {
-                handle
-                content
+        // Keep the panel while a search is open even if every card is
+        // filtered out, so the field can be cleared without the panel
+        // vanishing under the pointer.
+        // Group + onReceive stay mounted even while collapsed / empty, so a
+        // key can open search without the magnifying glass being on screen.
+        let all = Self.listed(Array(sessions.sessions.values))
+        Group {
+            if (all.isEmpty && !searching) || collapsed {
+                EmptyView()
+            } else {
+                VStack(spacing: 0) {
+                    handle
+                    // Open field in the stack (slides in, pushes the list);
+                    // closed icon stays absolute over the list's top trailing.
+                    if searching {
+                        searchBar
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    content
+                        .overlay(alignment: .topTrailing) {
+                            if !searching {
+                                searchToggle
+                                    .transition(.opacity)
+                            }
+                        }
+                }
+                .animation(Motion.settle, value: searching)
+                .frame(height: expandedHeight, alignment: .top)
+                .frame(maxWidth: .infinity)
+                // The column's own ground, not a white card on it: the sessions
+                // panel is part of the sidebar, so it takes the same colour as
+                // everything around it.
+                .background(ground)
+                .clipped()
             }
-            .frame(height: expandedHeight, alignment: .top)
-            .frame(maxWidth: .infinity)
-            // The column's own ground, not a white card on it: the sessions
-            // panel is part of the sidebar, so it takes the same colour as
-            // everything around it.
-            .background(ground)
-            .clipped()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: TabshSessionSearchActions.openName)) { _ in
+            withAnimation(Motion.settle) {
+                collapsed = false
+                searching = true
+            }
+            // After the field is in the tree — same timing as the glass button.
+            DispatchQueue.main.async { searchFocused = true }
         }
     }
 
@@ -730,6 +817,69 @@ struct TabshStatusPanel: View {
         .animation(Motion.quick, value: litHandle)
     }
 
+    /// The magnifying glass overlaid on the list (top trailing), so a
+    /// closed search takes no row under the grip.
+    private var searchToggle: some View {
+        Button {
+            withAnimation(Motion.settle) { searching = true }
+            // After the field is in the tree — setting focus in the
+            // same turn as `searching = true` misses it.
+            DispatchQueue.main.async { searchFocused = true }
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(!query.isEmpty ? Palette.ink : Palette.muted)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Search sessions")
+        .accessibilityLabel("Search sessions")
+        .padding(.top, 4)
+        .padding(.trailing, 4)
+    }
+
+    /// The field the magnifying glass opens: slides in under the grip and
+    /// takes a row, pushing the groups down. Same muted capsule as the
+    /// explorer's search.
+    private var searchBar: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(Palette.muted)
+            TextField("Search sessions…", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11.5))
+                .focused($searchFocused)
+                .onSubmit { searchFocused = false }
+            Button {
+                withAnimation(Motion.settle) {
+                    query = ""
+                    searching = false
+                    searchFocused = false
+                }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.faint)
+            }
+            .buttonStyle(.plain)
+            .help("Close session search")
+            .accessibilityLabel("Close session search")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Palette.hover)
+        )
+        .padding(.horizontal, 4)
+        .padding(.bottom, 4)
+        .onAppear {
+            DispatchQueue.main.async { searchFocused = true }
+        }
+    }
+
     private var content: some View {
         GeometryReader { outer in
             ScrollView(.vertical) {
@@ -739,11 +889,12 @@ struct TabshStatusPanel: View {
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(TabshStatus.allCases, id: \.self) { status in
                     let list = grouped[status] ?? []
-                    groupHeading(status, count: list.count)
-                    if !folded.contains(status) {
-                        ForEach(list) { session in
-                            row(session)
-                        }
+                    // A search that found nothing in this column skips it;
+                    // otherwise every status stays, empty counts included.
+                    if list.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        EmptyView()
+                    } else {
+                        statusGroup(status, list: list)
                     }
                 }
             }
@@ -774,11 +925,41 @@ struct TabshStatusPanel: View {
         }
     }
 
+    /// One status column: its heading and the rows under it. The whole
+    /// block takes a dragged session so a drop on the heading or on a peer
+    /// row moves the card here — the same change the row's Move to menu
+    /// writes.
+    @ViewBuilder
+    private func statusGroup(_ status: TabshStatus, list: [Tabsh.SessionInfo]) -> some View {
+        let open = !folded.contains(status)
+            || !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        VStack(alignment: .leading, spacing: 2) {
+            groupHeading(status, count: list.count)
+            if open {
+                ForEach(list) { session in
+                    row(session)
+                }
+            }
+        }
+        .padding(.bottom, dropTarget == status ? 2 : 0)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(dropTarget == status ? greys.hover.opacity(0.85) : .clear)
+        )
+        .onDrop(of: [.text], isTargeted: Binding(
+            get: { dropTarget == status },
+            set: { dropTarget = $0 ? status : (dropTarget == status ? nil : dropTarget) }
+        )) { providers in
+            acceptSessionDrop(providers, onto: status)
+        }
+    }
+
     /// A status heading, drawn like the browser's own tab group headings:
     /// the name in the column's grey at 12.5, a fold chevron at the trailing
     /// edge, and the fill only under the pointer.
     private func groupHeading(_ status: TabshStatus, count: Int) -> some View {
-        Button {
+        let lit = hoveredGroup == status || dropTarget == status
+        return Button {
             withAnimation(Motion.quick) {
                 var next = folded
                 if next.contains(status) { next.remove(status) }
@@ -800,14 +981,14 @@ struct TabshStatusPanel: View {
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(Palette.muted)
                     .rotationEffect(.degrees(folded.contains(status) ? -90 : 0))
-                    .opacity(hoveredGroup == status || folded.contains(status) ? 1 : 0)
+                    .opacity(lit || folded.contains(status) ? 1 : 0)
             }
             .padding(.horizontal, 10)
             .frame(height: 24)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(hoveredGroup == status ? greys.hover : .clear)
+                    .fill(lit ? greys.hover : .clear)
             )
             .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
@@ -816,6 +997,30 @@ struct TabshStatusPanel: View {
             if over { hoveredGroup = status }
             else if hoveredGroup == status { hoveredGroup = nil }
         }
+    }
+
+    /// A session drag onto a status group: move the card, and open a folded
+    /// group so the row is visible where it landed.
+    private func acceptSessionDrop(_ providers: [NSItemProvider], onto status: TabshStatus) -> Bool {
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: String.self) })
+        else { return false }
+        _ = provider.loadObject(ofClass: String.self) { value, _ in
+            guard let value, value.hasPrefix(Self.dragPrefix) else { return }
+            let id = String(value.dropFirst(Self.dragPrefix.count))
+            guard !id.isEmpty else { return }
+            DispatchQueue.main.async {
+                sessions.move(id, to: status)
+                if folded.contains(status) {
+                    withAnimation(Motion.quick) {
+                        var next = folded
+                        next.remove(status)
+                        foldedStorage = next.map(\.rawValue).sorted().joined(separator: ",")
+                    }
+                }
+                dropTarget = nil
+            }
+        }
+        return true
     }
 
     /// The browser tab a session already stands for, when one is open: a
@@ -918,6 +1123,9 @@ struct TabshStatusPanel: View {
             Button("Delete Session", role: .destructive) {
                 sessions.delete(session.id)
             }
+        }
+        .onDrag {
+            NSItemProvider(object: "\(Self.dragPrefix)\(session.id)" as NSString)
         }
         .onHover { over in
             if over { hovered = session.id }
@@ -1116,12 +1324,14 @@ final class TabshSessions: ObservableObject {
         }
 
         // Activity events name a terminal under `session`; a title it reports
-        // is the shell's or agent's own, so the tab follows it as the web
-        // app does.
+        // is the shell's or ACP agent's own, so the tab and chat header follow
+        // it as the web app does — but only when the card is unpinned, so a
+        // name the user chose stays put.
         if let session = object["session"] as? String,
            let title = object["title"] as? String,
            !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           var info = sessions[session] {
+           var info = sessions[session],
+           !info.pinned {
             info.name = title
             sessions[session] = info
             updateTabs()

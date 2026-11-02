@@ -39,7 +39,7 @@ on:
         required: false
         # The daemon this browser was built and tested against. Move it when
         # tabsh's API or embedded app changes, or type "main" for the newest.
-        default: v1.8.1
+        default: v1.8.2
       release:
         description: Create a draft GitHub Release from this run
         type: boolean
@@ -68,7 +68,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(inputs.arch == 'arm64' && '[{"arch":"arm64","rust_target":"aarch64-apple-darwin"}]' || inputs.arch == 'x86_64' && '[{"arch":"x86_64","rust_target":"x86_64-apple-darwin"}]' || '[{"arch":"arm64","rust_target":"aarch64-apple-darwin"},{"arch":"x86_64","rust_target":"x86_64-apple-darwin"}]') }}
     env:
-      TABSH_REF: ${{ inputs.tabsh-ref || 'v1.8.1' }}
+      TABSH_REF: ${{ inputs.tabsh-ref || 'v1.8.2' }}
       SEARCH_ARCH: ${{ matrix.arch }}
     outputs:
       tabsh-commit: ${{ steps.tabsh.outputs.commit }}

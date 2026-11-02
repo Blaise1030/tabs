@@ -20,6 +20,7 @@ struct SettingsPanel: View {
 
     @ObservedObject private var updater = Updater.shared
     @ObservedObject private var terminalSettings = TerminalPreferences.shared
+    @ObservedObject private var typingSounds = TypingSounds.shared
     @ObservedObject private var shield = Shield.shared
     @State private var isDefault = Links.isDefault
     /// A site shortcut being written, kept out of Preferences until it's saved.
@@ -728,10 +729,10 @@ struct SettingsPanel: View {
             TerminalFontPicker()
         case "terminal.sounds":
             Picker("", selection: Binding<TypingSoundPack>(
-                get: { TypingSounds.shared.pack },
+                get: { typingSounds.pack },
                 set: { chosen in
-                    TypingSounds.shared.pack = chosen
-                    TypingSounds.shared.preview(chosen)
+                    typingSounds.pack = chosen
+                    typingSounds.preview(chosen)
                 })) {
                 ForEach(TypingSoundPack.allCases) { pack in
                     Text(pack.title).tag(pack)

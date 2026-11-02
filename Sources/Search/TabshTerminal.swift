@@ -96,6 +96,11 @@ final class TabshTerminal: NSObject, ObservableObject, TerminalViewDelegate {
     /// rather than the whole scrollback, which replaces what is on screen.
     private var replaying = false
     private var resumed = false
+    /// SwiftTerm is still parsing the replay. Answers to OSC colour queries
+    /// in that history must not reach the live PTY — they would land on the
+    /// shell prompt as typed garbage (and race the daemon's resume line).
+    /// Same idea as the web app's `parsingReplay`.
+    private var parsingReplay = false
 
     init(sessionID: String) {
         self.sessionID = sessionID
@@ -199,9 +204,20 @@ final class TabshTerminal: NSObject, ObservableObject, TerminalViewDelegate {
             // are already counted by `at`. Live output came after it.
             let replay = replaying
             replaying = false
-            if replay, !resumed { view.resetToInitialState() }
-            if !data.isEmpty { view.feed(byteArray: [UInt8](data)[...]) }
-            if !replay { at += data.count }
+            if replay {
+                // Hold `send` closed across the feed and one turn after: the
+                // terminal answers colour queries while parsing, and may
+                // finish those replies on the next run-loop pass.
+                parsingReplay = true
+                if !resumed { view.resetToInitialState() }
+                if !data.isEmpty { view.feed(byteArray: [UInt8](data)[...]) }
+                DispatchQueue.main.async { [weak self] in
+                    self?.parsingReplay = false
+                }
+            } else {
+                if !data.isEmpty { view.feed(byteArray: [UInt8](data)[...]) }
+                at += data.count
+            }
             retries = 0
         case let .string(text):
             guard let data = text.data(using: .utf8),
@@ -249,6 +265,9 @@ final class TabshTerminal: NSObject, ObservableObject, TerminalViewDelegate {
     // MARK: - TerminalViewDelegate
 
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        // While the stream header is open or the replay is being parsed,
+        // drop emulator replies — they are not keystrokes.
+        guard !replaying, !parsingReplay else { return }
         guard !data.isEmpty, let socket else { return }
         socket.send(.data(Data(data))) { _ in }
     }

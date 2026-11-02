@@ -154,6 +154,22 @@ struct TabsApp: App {
                        ? (browser.folded ? "Show Sidebar" : "Hide Sidebar")
                        : (browser.folded ? "Show Tab Bar" : "Hide Tab Bar")) { browser.toggleFold() }
                     .shortcut("view.fold")
+                Button("Toggle Project Files") { TabshExplorerActions.toggle() }
+                    .shortcut("view.project")
+                    .disabled(browser.active?.tabshSessionID == nil)
+                Button("Search Project Files…") { TabshExplorerActions.searchFiles() }
+                    .shortcut("view.searchFiles")
+                    .disabled(browser.active?.tabshSessionID == nil)
+                Button("Search Sessions…") {
+                    if !browser.prefs.sidebar {
+                        withAnimation(Motion.glide) { browser.prefs.sidebar = true }
+                    }
+                    if browser.folded {
+                        withAnimation(Motion.glide) { browser.folded = false }
+                    }
+                    TabshSessionSearchActions.open()
+                }
+                    .shortcut("view.searchSessions")
                 Picker("Tabs Wear", selection: Binding(
                     get: { browser.prefs.glyph },
                     set: { browser.prefs.glyph = $0 }

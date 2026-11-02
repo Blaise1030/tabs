@@ -383,6 +383,10 @@ final class TabshChat: ObservableObject {
     }
     @Published private(set) var busy = false
     @Published private(set) var waiting = false
+    /// True while the SSE connection is still dumping its history replay.
+    /// The pane keeps the scroll pinned to the bottom and holds off a
+    /// full row-by-row paint until the burst goes quiet.
+    @Published private(set) var loadingHistory = true
     @Published private(set) var agentName = "Agent"
     @Published private(set) var models: Tabsh.ChatSelect?
     @Published private(set) var modes: Tabsh.ChatSelect?
@@ -403,6 +407,8 @@ final class TabshChat: ObservableObject {
     private var stream: Task<Void, Never>?
     private var refresh: Task<Void, Never>?
     private var options: Task<Void, Never>?
+    /// Ends `loadingHistory` once the replay has been quiet for a beat.
+    private var historyIdle: Task<Void, Never>?
     private var stopped = false
 
     init(sessionID: String) {
@@ -433,9 +439,11 @@ final class TabshChat: ObservableObject {
         stopped = true
         stream?.cancel()
         refresh?.cancel()
+        historyIdle?.cancel()
         options?.cancel()
         stream = nil
         refresh = nil
+        historyIdle = nil
         options = nil
     }
 
@@ -455,11 +463,11 @@ final class TabshChat: ObservableObject {
                 if Task.isCancelled || self.stopped { return }
                 if let answer = try? await Tabsh.chatModels(self.sessionID),
                    !answer.options.isEmpty {
-                    self.models = answer
+                    withAnimation(Motion.settle) { self.models = answer }
                 }
                 if let answer = try? await Tabsh.chatModes(self.sessionID),
                    !answer.options.isEmpty {
-                    self.modes = answer
+                    withAnimation(Motion.settle) { self.modes = answer }
                 }
                 if self.models != nil,
                    self.modes != nil || attempt >= 3 {
@@ -621,6 +629,10 @@ final class TabshChat: ObservableObject {
         // Every connection starts with the finished transcript. The first
         // chunk replaces what the last connection left behind; the rest of
         // the replay (and whatever comes after) appends to it.
+        loadingHistory = true
+        // Empty history never sends a chunk; start the quiet timer so the
+        // pane still leaves loading and can settle the scroll.
+        noteHistoryChunk()
         var replacing = true
         for try await line in bytes.lines {
             guard !Task.isCancelled, !stopped else { return }
@@ -643,7 +655,27 @@ final class TabshChat: ObservableObject {
            let index = pending.firstIndex(where: { $0.text == chunk.text }) {
             pending.remove(at: index)
         }
-        schedule()
+        if loadingHistory {
+            // Hold the row list still until the history burst pauses, then
+            // paint once and unpin the loading flag.
+            noteHistoryChunk()
+        } else {
+            schedule()
+        }
+    }
+
+    /// History arrives as a tight SSE burst with no "done" marker. A short
+    /// quiet window is the end of the replay; live turns restart the clock
+    /// on each token via `schedule` instead.
+    private func noteHistoryChunk() {
+        historyIdle?.cancel()
+        historyIdle = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.historyIdle = nil
+            self.rebuild()
+            self.loadingHistory = false
+        }
     }
 
     // The stream can send a token at a time. Rebuilding on each one would
@@ -802,11 +834,6 @@ struct TabshAgentPane: View {
     @ObservedObject private var sessions = TabshSessions.shared
     @StateObject private var chat: TabshChat
 
-    /// What is in the composer. Kept for the session rather than the view:
-    /// the pane is built again every time its tab comes back to the front (and
-    /// the tab can be closed and restored), so a message half typed has to
-    /// wait somewhere that outlives the view.
-    @State private var draft: String
     @State private var pinned = true
     /// The files column, shut until asked for: an agent's conversation is the
     /// tab, and a column nobody opened shouldn't take half of it. What was
@@ -814,44 +841,66 @@ struct TabshAgentPane: View {
     /// column's width is (see TabshProjectPane) — the pane itself is built
     /// again every time its tab comes back to the front.
     @AppStorage("tabsh.agent.explorer") private var showingExplorer = false
-    @State private var composerHeight: CGFloat = 32
-    @State private var focusToken = 0
-    @State private var attachments: [TabshPendingAttachment] = []
-    @State private var uploading = false
-    @State private var droppingFiles = false
     /// Asks the transcript to go to the bottom from outside its scroll view:
     /// sending a message, or the jump button.
     @State private var scrollToken = 0
+    /// Until the first transcript has been scrolled into place. The bottom
+    /// marker's preference can fire while the list is still empty or mid-
+    /// layout and clear `pinned`, after which row updates no longer follow —
+    /// so a freshly opened chat stayed at the top. Held true through the
+    /// first non-empty layout, ignoring those early unpin signals.
+    @State private var settlingScroll = true
+    /// How many older rows stay hidden above the viewport. After history
+    /// lands we keep only the newest `pageSize`; scrolling up lowers this
+    /// and reveals the next page without rebuilding the whole thread.
+    @State private var hiddenPrefix = 0
+    @State private var loadingMore = false
+    /// The first visible row id before an older page is prepended, so the
+    /// scroll can re-anchor there and the viewport does not jump.
+    @State private var loadAnchorID: String?
+
+    /// Newest messages shown first; older ones arrive a page at a time.
+    private static let pageSize = 30
 
     init(sessionID: String, browser: Browser) {
         self.sessionID = sessionID
         _browser = ObservedObject(wrappedValue: browser)
         _chat = StateObject(wrappedValue: TabshChats.shared.chat(for: sessionID))
-        _draft = State(initialValue: TabshDrafts.shared.text(for: sessionID))
     }
 
+    /// The slice of the transcript currently in the list.
+    private var displayedRows: [TabshChatRow] {
+        let rows = chat.rows
+        guard hiddenPrefix > 0, hiddenPrefix < rows.count else { return rows }
+        return Array(rows[hiddenPrefix...])
+    }
+
+    private var hasOlder: Bool { hiddenPrefix > 0 }
+
     var body: some View {
-        // The chat keeps the same project column a terminal tab has: the
-        // session's folder, and the files the agent is working in, beside
-        // the conversation rather than in another tab.
-        TabshProjectPane(sessionID: sessionID,
-                         browser: browser,
-                         ground: Palette.ground,
-                         showingExplorer: $showingExplorer) {
-            VStack(spacing: 0) {
-                header
-                transcript
-                composer
+        // The header spans the chat and the explorer, so the status select
+        // and session menu sit at the trailing end of the whole bar rather
+        // than stopping where the conversation column ends.
+        VStack(spacing: 0) {
+            header
+            // The chat keeps the same project column a terminal tab has: the
+            // session's folder, and the files the agent is working in, beside
+            // the conversation rather than in another tab.
+            TabshProjectPane(sessionID: sessionID,
+                             browser: browser,
+                             ground: Palette.ground,
+                             showingExplorer: $showingExplorer) {
+                VStack(spacing: 0) {
+                    transcript
+                    // Draft state lives here, not on the pane: a keystroke used
+                    // to rebuild the whole transcript (and beachball) because
+                    // `@State draft` sat on TabshAgentPane above.
+                    TabshAgentComposer(sessionID: sessionID,
+                                       browser: browser,
+                                       chat: chat,
+                                       scrollToken: $scrollToken)
+                }
             }
-        }
-        .onAppear {
-            draft = TabshDrafts.shared.text(for: sessionID)
-            focusToken += 1
-        }
-        // Every keystroke is kept: the store writes the map through
-        // UserDefaults, which holds it in memory and flushes it on its own.
-        .onChange(of: draft) { _, text in
-            TabshDrafts.shared.set(text, for: sessionID)
         }
     }
 
@@ -860,16 +909,31 @@ struct TabshAgentPane: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        if chat.rows.isEmpty, !chat.busy {
+                        if chat.loadingHistory {
+                            historySpinner
+                        } else if chat.rows.isEmpty, !chat.busy {
                             empty
-                        }
-                        ForEach(Array(chat.rows.enumerated()), id: \.element.id) { index, row in
-                            TabshChatRowView(row: row, chat: chat)
-                                .padding(.top, gap(before: index))
-                        }
-                        if chat.waiting {
-                            TabshThinkingRow()
-                                .padding(.top, 12)
+                        } else {
+                            if hasOlder || loadingMore {
+                                loadOlderHeader
+                                    .background {
+                                        GeometryReader { geo in
+                                            Color.clear.preference(
+                                                key: ChatTopKey.self,
+                                                value: geo.frame(in: .named("chatScroll")).minY
+                                            )
+                                        }
+                                    }
+                            }
+                            ForEach(Array(displayedRows.enumerated()), id: \.element.id) { index, row in
+                                TabshChatRowView(row: row, chat: chat)
+                                    .id(row.id)
+                                    .padding(.top, gap(before: index, in: displayedRows))
+                            }
+                            if chat.waiting {
+                                TabshThinkingRow()
+                                    .padding(.top, 12)
+                            }
                         }
                         Color.clear
                             .frame(height: 1)
@@ -884,7 +948,9 @@ struct TabshAgentPane: View {
                             }
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 22)
+                    // Inset past the composer's card (also 22) so bubbles
+                    // sit inside its width rather than flush with its edges.
+                    .padding(.horizontal, 36)
                     .padding(.top, 14)
                     .padding(.bottom, 14)
                 }
@@ -899,9 +965,45 @@ struct TabshAgentPane: View {
                 .onPreferenceChange(ChatBottomKey.self) { bottom in
                     // The bottom marker is inside the visible scroll area
                     // while the reader is near the newest message.
+                    guard !settlingScroll, !chat.loadingHistory else { return }
                     pinned = bottom <= outer.size.height + 48
                 }
-                .onChange(of: chat.rows) { _, _ in follow(proxy) }
+                .onPreferenceChange(ChatTopKey.self) { top in
+                    // The older-page header crossed into view: ask for the
+                    // next page. Ignore while history is still settling.
+                    guard !settlingScroll, !chat.loadingHistory, !loadingMore, hasOlder else { return }
+                    if top > -40, top < outer.size.height {
+                        loadOlder(using: proxy)
+                    }
+                }
+                .onChange(of: chat.rows) { before, after in
+                    // A shorter rebuild (rare) must not leave the window
+                    // past the end; growing at the bottom keeps the prefix.
+                    if hiddenPrefix > after.count {
+                        hiddenPrefix = max(0, after.count - Self.pageSize)
+                    }
+                    if settlingScroll || chat.loadingHistory {
+                        jumpToBottom(proxy)
+                    } else if after.count > before.count, pinned {
+                        follow(proxy)
+                    }
+                }
+                .onChange(of: chat.loadingHistory) { _, loading in
+                    // History painted in one shot: window to the newest
+                    // page, pin to the bottom, then let follow-vs-unpin run.
+                    if !loading {
+                        windowToLatest()
+                        jumpToBottom(proxy)
+                        DispatchQueue.main.async {
+                            jumpToBottom(proxy)
+                            settlingScroll = false
+                        }
+                    } else {
+                        settlingScroll = true
+                        pinned = true
+                        hiddenPrefix = 0
+                    }
+                }
                 .onChange(of: chat.waiting) { _, _ in follow(proxy) }
                 .onChange(of: scrollToken) { _, _ in
                     pinned = true
@@ -909,9 +1011,31 @@ struct TabshAgentPane: View {
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
-                .onAppear {
+                .onChange(of: loadingMore) { was, now in
+                    // After older rows land, snap back to the row that was
+                    // at the top so the viewport does not leap upward.
+                    guard was, !now, let id = loadAnchorID else { return }
+                    proxy.scrollTo(id, anchor: .top)
                     DispatchQueue.main.async {
-                        proxy.scrollTo("bottom", anchor: .bottom)
+                        proxy.scrollTo(id, anchor: .top)
+                        loadAnchorID = nil
+                    }
+                }
+                .onAppear {
+                    settlingScroll = true
+                    pinned = true
+                    if !chat.loadingHistory {
+                        windowToLatest()
+                    }
+                    jumpToBottom(proxy)
+                    // Already past the history burst (a revisited chat):
+                    // settle after the next layout rather than waiting for
+                    // a loading edge that will not come.
+                    if !chat.loadingHistory, !chat.rows.isEmpty {
+                        DispatchQueue.main.async {
+                            jumpToBottom(proxy)
+                            settlingScroll = false
+                        }
                     }
                 }
             }
@@ -931,7 +1055,7 @@ struct TabshAgentPane: View {
                         .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
                     }
                     .buttonStyle(.plain)
-                    .padding(.trailing, 26)
+                    .padding(.trailing, 40)
                     .padding(.bottom, 12)
                     .help("Scroll to bottom")
                     .accessibilityLabel("Scroll to bottom")
@@ -939,6 +1063,64 @@ struct TabshAgentPane: View {
                 }
             }
             .animation(Motion.quick, value: pinned)
+        }
+    }
+
+    /// Spinner at the top of the list while an older page is requested, or
+    /// a quiet placeholder so the header still has a drop target when there
+    /// is more history above.
+    private var loadOlderHeader: some View {
+        HStack {
+            Spacer(minLength: 0)
+            if loadingMore {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Text("Scroll for earlier messages")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.faint)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(height: 28)
+        .padding(.bottom, 8)
+        .accessibilityLabel(loadingMore ? "Loading earlier messages" : "Scroll for earlier messages")
+    }
+
+    private var historySpinner: some View {
+        HStack {
+            Spacer(minLength: 0)
+            ProgressView()
+                .controlSize(.regular)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 54)
+        .accessibilityLabel("Loading conversation")
+    }
+
+    /// Keep only the newest page on screen after a history burst.
+    private func windowToLatest() {
+        hiddenPrefix = max(0, chat.rows.count - Self.pageSize)
+        loadingMore = false
+        loadAnchorID = nil
+    }
+
+    /// Reveal the next older page and remember the row that was at the top
+    /// so the scroll can re-anchor after layout.
+    private func loadOlder(using proxy: ScrollViewProxy) {
+        guard !loadingMore, hiddenPrefix > 0 else { return }
+        loadAnchorID = displayedRows.first?.id
+        loadingMore = true
+        let step = min(Self.pageSize, hiddenPrefix)
+        Task { @MainActor in
+            // Let the spinner paint before the list grows; the rows are
+            // already in memory from the history stream.
+            try? await Task.sleep(nanoseconds: 40_000_000)
+            guard !Task.isCancelled else { return }
+            hiddenPrefix = max(0, hiddenPrefix - step)
+            loadingMore = false
+            _ = proxy
         }
     }
 
@@ -975,10 +1157,10 @@ struct TabshAgentPane: View {
 
     /// Messages by one sender sit close; a change of sender gets a breath,
     /// the way a thread separates one person's run from the other's.
-    private func gap(before index: Int) -> CGFloat {
-        guard index > 0, chat.rows.indices.contains(index) else { return 0 }
-        let previous = chat.rows[index - 1]
-        let row = chat.rows[index]
+    private func gap(before index: Int, in rows: [TabshChatRow]) -> CGFloat {
+        guard index > 0, rows.indices.contains(index) else { return 0 }
+        let previous = rows[index - 1]
+        let row = rows[index]
         if previous.kind == row.kind, (row.kind == .user || row.kind == .agent) {
             return 3
         }
@@ -988,6 +1170,16 @@ struct TabshAgentPane: View {
     private func follow(_ proxy: ScrollViewProxy) {
         guard pinned else { return }
         proxy.scrollTo("bottom", anchor: .bottom)
+    }
+
+    /// Scroll to the newest message, then once more on the next turn so
+    /// LazyVStack's deferred row heights do not leave the view short.
+    private func jumpToBottom(_ proxy: ScrollViewProxy) {
+        pinned = true
+        proxy.scrollTo("bottom", anchor: .bottom)
+        DispatchQueue.main.async {
+            proxy.scrollTo("bottom", anchor: .bottom)
+        }
     }
 
     private var empty: some View {
@@ -1002,18 +1194,38 @@ struct TabshAgentPane: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 54)
-        .padding(.horizontal, 32)
     }
 
-    /// The ground the sidebar column wears behind its rows, which the
-    /// composer's card takes too: one surface for the app's chrome, rather
-    /// than a tile of the composer's own (see SideBar's `ground`).
-    private var composerGround: Color {
-        if let theme = browser.chromeTheme { return Color(nsColor: theme.color) }
-        return browser.asCards ? Palette.frame : Palette.ground
+}
+
+/// The agent chat's input card. Kept as its own view so typing the draft
+/// does not rebuild the transcript above on every keystroke.
+private struct TabshAgentComposer: View {
+    let sessionID: String
+    @ObservedObject var browser: Browser
+    @ObservedObject var chat: TabshChat
+    @Binding var scrollToken: Int
+
+    /// What is in the composer. Kept for the session rather than the view:
+    /// the pane is built again every time its tab comes back to the front (and
+    /// the tab can be closed and restored), so a message half typed has to
+    /// wait somewhere that outlives the view.
+    @State private var draft: String
+    @State private var composerHeight: CGFloat = 32
+    @State private var focusToken = 0
+    @State private var attachments: [TabshPendingAttachment] = []
+    @State private var uploading = false
+    @State private var droppingFiles = false
+
+    init(sessionID: String, browser: Browser, chat: TabshChat, scrollToken: Binding<Int>) {
+        self.sessionID = sessionID
+        _browser = ObservedObject(wrappedValue: browser)
+        _chat = ObservedObject(wrappedValue: chat)
+        _scrollToken = scrollToken
+        _draft = State(initialValue: TabshDrafts.shared.text(for: sessionID))
     }
 
-    private var composer: some View {
+    var body: some View {
         VStack(spacing: 7) {
             if let notice = chat.notice {
                 Text(notice)
@@ -1093,8 +1305,10 @@ struct TabshAgentPane: View {
                 if chat.models != nil || chat.modes != nil {
                     selects
                         .padding(.bottom, 2)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
+            .animation(Motion.settle, value: chat.models != nil || chat.modes != nil)
             .padding(.horizontal, 5)
             .padding(.vertical, 5)
             .frame(maxWidth: .infinity)
@@ -1124,6 +1338,20 @@ struct TabshAgentPane: View {
         .padding(.horizontal, 22)
         .padding(.top, 9)
         .padding(.bottom, 12)
+        .onAppear {
+            draft = TabshDrafts.shared.text(for: sessionID)
+            focusToken += 1
+        }
+        // Every keystroke is kept: the store writes the map through
+        // UserDefaults, which holds it in memory and flushes it on its own.
+        .onChange(of: draft) { _, text in
+            TabshDrafts.shared.set(text, for: sessionID)
+        }
+    }
+
+    private var composerGround: Color {
+        if let theme = browser.chromeTheme { return Color(nsColor: theme.color) }
+        return browser.asCards ? Palette.frame : Palette.ground
     }
 
     private var attachmentBar: some View {
@@ -1150,15 +1378,21 @@ struct TabshAgentPane: View {
                 TabshModelPicker(select: models,
                                  busy: chat.busy || chat.changingOption,
                                  choose: chat.selectModel)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .leading)))
             }
             if let modes = chat.modes, !modes.options.isEmpty {
                 TabshModePicker(select: modes,
                                 busy: chat.busy || chat.changingOption,
                                 choose: chat.selectMode)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .leading)))
             }
             Spacer(minLength: 0)
         }
         .padding(.leading, 1)
+        // Modes often arrive a beat after models; each capsule eases in on
+        // its own rather than popping beside the one already there.
+        .animation(Motion.settle, value: chat.models != nil)
+        .animation(Motion.settle, value: chat.modes != nil)
     }
 
     private var canSend: Bool {
@@ -1546,6 +1780,14 @@ struct TabshModeList: View {
 
 private struct ChatBottomKey: PreferenceKey {
     static var defaultValue: CGFloat = .greatestFiniteMagnitude
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+/// Where the "load older" header sits in the transcript's scroll space.
+private struct ChatTopKey: PreferenceKey {
+    static var defaultValue: CGFloat = -.greatestFiniteMagnitude
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
     }

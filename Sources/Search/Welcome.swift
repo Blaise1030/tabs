@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The first time. Four short pages over the window, in the app's own
@@ -26,6 +27,13 @@ struct WelcomePanel: View {
     @State private var isDefault = Links.isDefault
     @State private var asked = false
 
+    // Connect your agents: pick a provider, copy the setup prompt, or open
+    // a card that runs it.
+    @State private var editingAgents = false
+    @State private var settingUp = false
+    @State private var setupFailure: String?
+    @State private var copiedPrompt = false
+
     private var importsPasswords: Bool { (source ?? ImportSource.installed().first)?.importsPasswords ?? false }
 
     private let pages = 5
@@ -41,8 +49,8 @@ struct WelcomePanel: View {
                     case 0: welcome
                     case 1: bring
                     case 2: hold
-                    case 3: agents
-                    default: links
+                    case 3: links
+                    default: agents
                     }
                 }
                 .frame(maxWidth: 520)
@@ -163,9 +171,35 @@ struct WelcomePanel: View {
 
     private var agents: some View {
         VStack(alignment: .leading, spacing: 22) {
-            heading("Connect your agents.", "New Agent starts a coding agent for you. These are the ones tabsh knows: pick the one it should start, and give each the commands it runs in a terminal or speaks over ACP for a chat card.")
-            AgentProvidersSettings()
+            heading("Connect your agents.",
+                    "Cards move on their own when your coding agent reports what it is doing. Pick one and let it wire its hooks, or copy the prompt into a session you already have.")
+            if editingAgents {
+                AgentProvidersSettings()
+                Button {
+                    withAnimation(Motion.settle) { editingAgents = false }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Back to setup")
+                            .font(.system(size: 11.5, weight: .medium))
+                    }
+                    .foregroundStyle(Palette.muted)
+                }
+                .buttonStyle(.plain)
+            } else {
+                WelcomeAgentSetup(
+                    settingUp: $settingUp,
+                    failure: $setupFailure,
+                    copied: $copiedPrompt,
+                    onEditProviders: {
+                        withAnimation(Motion.settle) { editingAgents = true }
+                    },
+                    onSetUp: setUpAgent
+                )
+            }
         }
+        .onAppear { AgentProviderStore.shared.refresh() }
     }
 
     private var links: some View {
@@ -307,6 +341,33 @@ struct WelcomePanel: View {
     private func finish() {
         prefs.welcomed = true
         withAnimation(Motion.settle) { browser.welcoming = false }
+    }
+
+    /// Opens a TUI card whose first prompt is the Tabs setup guide, for the
+    /// provider the user picked — same idea as tabsh web's welcome Set up.
+    private func setUpAgent() {
+        let store = AgentProviderStore.shared
+        guard let provider = store.providers.first(where: { $0.name == store.preferred })
+                ?? store.providers.first
+        else { return }
+        settingUp = true
+        setupFailure = nil
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        Task { @MainActor in
+            do {
+                let session = try await Tabsh.createAgent(
+                    cwd: home,
+                    prompt: TabshDaemon.setupPrompt,
+                    provider: provider.tabsh,
+                    mode: "tui",
+                    status: "in_progress")
+                finish()
+                _ = browser.show(InternalPage(.tabsh, session.id))
+            } catch {
+                setupFailure = error.localizedDescription
+            }
+            settingUp = false
+        }
     }
 
     private func heading(_ title: String, _ line: String) -> some View {
@@ -463,6 +524,148 @@ struct WelcomePanel: View {
                     .frame(minWidth: 44)
                 Text(what).font(.system(size: 13)).foregroundStyle(Palette.muted)
             }
+        }
+    }
+}
+
+/// Welcome's agents step: pick a provider, copy the Tabs setup prompt, or
+/// open a card that runs it — the editor stays one tap away.
+private struct WelcomeAgentSetup: View {
+    @ObservedObject private var store = AgentProviderStore.shared
+    @Binding var settingUp: Bool
+    @Binding var failure: String?
+    @Binding var copied: Bool
+    let onEditProviders: () -> Void
+    let onSetUp: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Card {
+                ForEach(Array(store.providers.enumerated()), id: \.element.id) { index, provider in
+                    if index > 0 { Rule() }
+                    providerRow(provider)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Or paste into a session you already have")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Palette.faint)
+                    .textCase(.uppercase)
+                    .tracking(0.6)
+                HStack(alignment: .top, spacing: 10) {
+                    Text(TabshDaemon.setupPrompt)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(Palette.ink)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Pill(copied ? "Copied" : "Copy") { copyPrompt() }
+                }
+                .padding(12)
+                .background(Palette.wash, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
+            HStack(spacing: 12) {
+                Big("Set up with \(chosenName)", filled: true, act: onSetUp)
+                    .disabled(settingUp || store.providers.isEmpty)
+                if settingUp { Ring(size: 10) }
+                Button("Edit providers…") { onEditProviders() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Palette.muted)
+            }
+
+            if let failure {
+                Text(failure)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Palette.unsafe)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if store.reading {
+                HStack(spacing: 8) {
+                    Ring(size: 10)
+                    Text("Reading agents…")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Palette.muted)
+                }
+            }
+        }
+    }
+
+    private var chosenName: String {
+        store.preferred
+            ?? store.providers.first?.name
+            ?? "an agent"
+    }
+
+    private func providerRow(_ provider: AgentProvider) -> some View {
+        Button {
+            store.choose(provider)
+        } label: {
+            HStack(spacing: 12) {
+                TabshAgentMark(brand: provider.brand, size: 14, tint: Palette.ink)
+                    .frame(width: 26, height: 26)
+                    .background(Palette.wash, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(provider.name)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Palette.ink)
+                    Text(provider.command)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(Palette.muted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 8)
+                if store.preferred == provider.name {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Palette.muted)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func copyPrompt() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(TabshDaemon.setupPrompt, forType: .string)
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            copied = false
+        }
+    }
+
+    /// Same capsule as Welcome's Continue, kept local so this screen does
+    /// not reach into WelcomePanel's private pieces.
+    private struct Big: View {
+        let title: String
+        var filled = false
+        let act: () -> Void
+        @State private var hovering = false
+
+        init(_ title: String, filled: Bool = false, act: @escaping () -> Void) {
+            self.title = title
+            self.filled = filled
+            self.act = act
+        }
+
+        var body: some View {
+            Button(action: act) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(filled ? Palette.ground : Palette.ink)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                    .background(filled ? Palette.ink : (hovering ? Palette.hover : Palette.wash),
+                                in: Capsule())
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
         }
     }
 }

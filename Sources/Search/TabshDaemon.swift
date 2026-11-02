@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 
 /// tabsh's daemon, in the app: the Rust process that runs the shells and
@@ -9,9 +10,9 @@ import Foundation
 /// browser installs tabsh. It is this browser's own instance, not the tabsh
 /// someone runs for the web app, its CLI or a phone: `TABSH_DB` points at
 /// state in the app's own folder, on its own port, so the two never share a
-/// database (see `stateFolder`). Started here, it outlives the browser on
-/// purpose: tabsh's promise is that shells stay up when the tab, the window
-/// and the app go away.
+/// database (see `stateFolder`). Started with the browser and stopped on
+/// quit (`stop()`), so shells and agents do not keep running after Tabs
+/// closes.
 @MainActor
 final class TabshDaemon {
     static let shared = TabshDaemon()
@@ -55,6 +56,31 @@ final class TabshDaemon {
         stateFolder.deletingLastPathComponent().appendingPathComponent("bin", isDirectory: true)
     }
 
+    /// The symlink `start()` keeps in `binFolder`, which shells and hooks
+    /// should call so they always reach this app's daemon.
+    nonisolated static var cliPath: URL {
+        binFolder.appendingPathComponent("tabsh")
+    }
+
+    /// Prompt Welcome / Settings hand to a coding agent so it wires hooks to
+    /// *this* Tabs daemon (port 7682), not a separate `~/.tabsh` install.
+    /// Asks which CLI to configure first — nothing is edited until the user
+    /// answers. Quoted for a shell paste; `TABSH_URL` is set so `tabsh setup`
+    /// embeds the right URL even when run outside a Tabs terminal.
+    nonisolated static var setupPrompt: String {
+        let quoted = "'\(cliPath.path.replacingOccurrences(of: "'", with: "'\\''"))'"
+        return """
+        Wire a coding CLI's hooks to the Tabs board. Before you change any \
+        config, ask me which CLI to set up (Claude Code, Cursor CLI, Codex, \
+        OpenCode, Muse, or another I name). Do not edit files or run setup \
+        until I answer. Once I pick one, run \
+        `TABSH_URL=http://127.0.0.1:\(port) \(quoted) setup` and follow the \
+        guide it prints — configure only that CLI so its cards stay current \
+        on Tabs.
+        """
+        .replacingOccurrences(of: "\n", with: " ")
+    }
+
     /// The `PATH` the daemon is given, and through it every shell and agent
     /// it starts.
     ///
@@ -65,9 +91,8 @@ final class TabshDaemon {
     /// the rest of Homebrew in `/opt/homebrew/bin`, npm's global `bin` beside
     /// nvm or pnpm. With only `launchd`'s three folders, every ACP chat died
     /// on `failed to spawn ACP agent ...: No such file or directory`, whatever
-    /// the agent, and it kept dying: the daemon outlives the browser, so a
-    /// relaunch from a terminal inherited nothing back into a daemon that was
-    /// already up.
+    /// the agent. A relaunch used to inherit nothing into a daemon left up
+    /// from a Dock start; quitting now stops that daemon with the app.
     ///
     /// The app's `tabsh` link comes first, so nothing installed elsewhere can
     /// shadow the copy the hooks are meant to call, then the folders above, in
@@ -128,6 +153,57 @@ final class TabshDaemon {
         }
     }
 
+    /// On quit: stop this browser's daemon so shells and agents leave with it.
+    /// SIGTERM lets tabsh flush state; a stuck process is killed after a short
+    /// wait. Also clears an orphan left from a previous run (no `Process`
+    /// handle when we adopted one already listening on our port).
+    func stop() {
+        starting = false
+        if let task = process {
+            process = nil
+            if task.isRunning {
+                task.terminate()
+                Self.waitForExit(task, seconds: 2)
+                if task.isRunning {
+                    kill(task.processIdentifier, SIGKILL)
+                }
+            }
+        }
+        Self.terminateListener(on: Self.port)
+    }
+
+    /// Waits until `task` exits or `seconds` elapse. Used on the quit path,
+    /// where a short block is better than leaving the daemon behind.
+    nonisolated private static func waitForExit(_ task: Process, seconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while task.isRunning, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+    }
+
+    /// Sends SIGTERM to whatever is listening on this browser's port. Port
+    /// 7682 is only for Tabs' own daemon, so an orphan from a prior launch is
+    /// safe to take down here when we have no `Process` handle for it.
+    nonisolated private static func terminateListener(on port: Int) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        task.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-t"]
+        let out = Pipe()
+        task.standardOutput = out
+        task.standardError = Pipe()
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            return
+        }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        guard let text = String(data: data, encoding: .utf8) else { return }
+        for pid in text.split(whereSeparator: \.isWhitespace).compactMap({ Int32($0) }) {
+            kill(pid, SIGTERM)
+        }
+    }
+
     /// Whether the process answering the port is this browser's daemon.
     /// Anything could be listening, and the old behaviour — trust whatever
     /// answers — is what made the browser share another tabsh's database.
@@ -181,6 +257,15 @@ final class TabshDaemon {
         let task = Process()
         task.executableURL = binary
         var environment = ProcessInfo.processInfo.environment
+        // Tabs opened from Cursor's agent shell inherits that agent's mute
+        // flags (`NO_COLOR=1`, `FORCE_COLOR=0`, `CURSOR_AGENT=1`, `TERM=dumb`).
+        // The daemon's PTYs would then start every coding CLI without colour.
+        for key in ["NO_COLOR", "FORCE_COLOR", "CURSOR_AGENT", "CLAUDECODE"] {
+            environment.removeValue(forKey: key)
+        }
+        if environment["TERM"] == "dumb" {
+            environment.removeValue(forKey: "TERM")
+        }
         // Its own state, never the user's ~/.tabsh: the database, its token
         // and the chats and uploads beside them all follow TABSH_DB. The
         // shells it starts inherit this, so `tabsh status` in an agent's hook

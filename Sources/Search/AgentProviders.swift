@@ -19,6 +19,17 @@ struct AgentProvider: Identifiable, Equatable {
         self.resume = resume
         self.acp = acp
     }
+
+    /// What `Tabsh.createAgent` wants: the same four fields under the
+    /// daemon's provider shape.
+    var tabsh: Tabsh.Provider {
+        Tabsh.Provider(name: name, command: command, resume: resume, acp: acp)
+    }
+
+    /// The same brand mark session tabs wear for this provider.
+    var brand: TabshAgentBrand {
+        TabshAgentBrand.infer(name: name, command: command, acp: acp)
+    }
 }
 
 /// Which part of a provider a row edits.
@@ -81,6 +92,7 @@ final class AgentProviderStore: ObservableObject {
             // An edit made while the list was coming back is newer than it.
             guard revision == started else { return }
             var list: [AgentProvider] = []
+            var migrated = false
             for entry in object["providers"] as? [[String: Any]] ?? [] {
                 let name = (entry["name"] as? String ?? "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -89,17 +101,30 @@ final class AgentProviderStore: ObservableObject {
                 guard !name.isEmpty, !command.isEmpty,
                       !list.contains(where: { $0.name == name })
                 else { continue }
+                let raw = Tabsh.Provider(name: name, command: command,
+                                         resume: entry["resume"] as? String,
+                                         acp: entry["acp"] as? String)
+                let fixed = raw.withOpenCodeSessionMint()
+                if fixed.command != raw.command || fixed.resume != raw.resume {
+                    migrated = true
+                }
                 list.append(AgentProvider(
-                    name: name,
-                    command: command,
-                    resume: entry["resume"] as? String ?? "",
-                    acp: entry["acp"] as? String ?? ""
+                    name: fixed.name,
+                    command: fixed.command,
+                    resume: fixed.resume ?? "",
+                    acp: fixed.acp ?? ""
                 ))
             }
             // A daemon with nothing saved gets the same stock agent the web
             // app would have offered, ready to edit rather than an empty page.
             if list.isEmpty { list = [Self.stock()] }
             providers = Array(list.prefix(Self.most))
+            // Persist the OpenCode minting fix once, so New Agent and a
+            // restart agree without waiting for the next Settings edit.
+            if migrated {
+                revision += 1
+                save()
+            }
             let wanted = object["agentProvider"] as? String
             preferred = providers.first { $0.name == wanted }?.name ?? providers.first?.name
             failure = nil
@@ -310,9 +335,7 @@ struct AgentProvidersSettings: View {
                 store.choose(provider)
             } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: "terminal")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Palette.ink.opacity(0.78))
+                    TabshAgentMark(brand: provider.brand, size: 14, tint: Palette.ink)
                         .frame(width: 26, height: 26)
                         .background(Palette.wash, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                     VStack(alignment: .leading, spacing: 2) {
@@ -422,8 +445,7 @@ private struct AgentProviderEditor: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
-                    Image(systemName: "terminal")
-                        .font(.system(size: 10.5, weight: .semibold))
+                    TabshAgentMark(brand: provider.brand, size: 12, tint: Palette.ink)
                     Text(provider.name.uppercased())
                         .font(.system(size: 10.5, weight: .semibold))
                         .tracking(0.5)

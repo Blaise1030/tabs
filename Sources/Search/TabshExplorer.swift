@@ -1,4 +1,24 @@
+import AppKit
 import SwiftUI
+
+/// Opens or focuses the project column from a menu or key. Only the front
+/// terminal/agent tab answers — every open pane listens, and the one whose
+/// session is on screen acts.
+enum TabshExplorerActions {
+    static let toggleName = Notification.Name("tabsh.explorer.toggle")
+    static let searchName = Notification.Name("tabsh.explorer.search")
+    /// The explorer column itself: focus its search field after it opens.
+    static let focusSearch = Notification.Name("tabsh.explorer.focusSearch")
+
+    static func toggle() {
+        NotificationCenter.default.post(name: toggleName, object: nil)
+    }
+
+    /// Show the project column (if shut) and put the caret in Search….
+    static func searchFiles() {
+        NotificationCenter.default.post(name: searchName, object: nil)
+    }
+}
 
 // A terminal tab's project, down the side: the tree the daemon builds from
 // the session's own folder (see Tabsh.tree), with a field that filters it.
@@ -124,6 +144,12 @@ struct TabshProjectPane<Content: View>: View {
 
     @AppStorage("tabsh.explorerWidth") private var explorerWidth: Double = 200
 
+    /// This pane belongs to the tab on screen: keys and menus only open its
+    /// explorer, not every terminal sitting behind it.
+    private var isFront: Bool {
+        browser.active?.tabshSessionID == sessionID
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             content
@@ -139,6 +165,20 @@ struct TabshProjectPane<Content: View>: View {
         }
         .background(ground)
         .clipped()
+        .onReceive(NotificationCenter.default.publisher(for: TabshExplorerActions.toggleName)) { _ in
+            guard isFront else { return }
+            showingExplorer.toggle()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: TabshExplorerActions.searchName)) { _ in
+            guard isFront else { return }
+            showingExplorer = true
+            // After the column is in the tree — focusing in the same turn
+            // as opening misses the field.
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: TabshExplorerActions.focusSearch,
+                                                object: sessionID)
+            }
+        }
     }
 
     /// The explorer's edge: a hairline to see, nine points to take hold of.
@@ -183,6 +223,7 @@ private struct TabshExplorer: View {
     @ObservedObject var browser: Browser
     let close: () -> Void
 
+    @ObservedObject private var sessions = TabshSessions.shared
     @State private var root = ""
     @State private var paths: [String] = []
     @State private var truncated = false
@@ -192,6 +233,10 @@ private struct TabshExplorer: View {
     @State private var search = ""
     @State private var expanded: Set<String> = []
     @State private var hovered: String?
+    /// Folders whose children are being fetched (truncated listings start
+    /// empty under each folder until opened).
+    @State private var loadingFolders: Set<String> = []
+    @FocusState private var searchFocused: Bool
 
     /// What this session's tree had open, kept per session so switching a
     /// tab or relaunching the browser comes back to the same folders.
@@ -255,6 +300,7 @@ private struct TabshExplorer: View {
                 TextField("Search…", text: $search)
                     .textFieldStyle(.plain)
                     .font(.system(size: 11.5))
+                    .focused($searchFocused)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -267,6 +313,10 @@ private struct TabshExplorer: View {
         }
         .padding(.horizontal, 10)
         .padding(.top, 10)
+        .onReceive(NotificationCenter.default.publisher(for: TabshExplorerActions.focusSearch)) { note in
+            guard (note.object as? String) == sessionID else { return }
+            searchFocused = true
+        }
         .padding(.bottom, 6)
         .task(id: sessionID) {
             restoreFolders()
@@ -277,6 +327,9 @@ private struct TabshExplorer: View {
         }
         .onChange(of: expanded) { _, open in
             UserDefaults.standard.set(Array(open), forKey: expandedKey)
+            // Truncated / folders-only listings only carry the first level:
+            // opening a folder loads what is under it.
+            Task { await loadOpenedFolders(open) }
         }
     }
 
@@ -319,7 +372,7 @@ private struct TabshExplorer: View {
                     // A reduced listing still draws: folders (and top-level
                     // files) rather than an empty column when the tree is huge.
                     if truncated || foldersOnly {
-                        Text("Folders and top-level files — too many to list the whole tree.")
+                        Text("Folders and top-level files — open a folder to explore it.")
                             .font(.system(size: 10.5))
                             .foregroundStyle(Palette.faint)
                             .padding(.top, 4)
@@ -328,7 +381,8 @@ private struct TabshExplorer: View {
                     }
                     ForEach(tree) { node in
                         TreeRows(node: node, depth: 0, base: root,
-                                 expanded: $expanded, hovered: $hovered, open: open)
+                                 expanded: $expanded, hovered: $hovered,
+                                 loadingFolders: loadingFolders, open: open)
                     }
                 }
             }
@@ -379,14 +433,82 @@ private struct TabshExplorer: View {
         failure = nil
         do {
             let tree = try await Tabsh.tree(session: sessionID)
-            root = tree.root
-            paths = tree.paths
-            truncated = tree.truncated
-            foldersOnly = tree.foldersOnly
+            apply(tree)
             loading = false
+            // Restored open folders under a truncated root need their
+            // children fetched the same way a fresh click would.
+            await loadOpenedFolders(expanded)
         } catch {
-            failure = error.localizedDescription
+            // A timeout on a huge root used to leave the column empty with
+            // "/" in the header. Fall back to a shallow listing of the
+            // session folder (or home, or `/`) so folders are still there
+            // to open.
+            if let tree = await shallowFallback() {
+                apply(tree)
+                failure = nil
+                await loadOpenedFolders(expanded)
+            } else {
+                failure = error.localizedDescription
+            }
             loading = false
+        }
+    }
+
+    private func apply(_ tree: Tabsh.Tree) {
+        root = tree.root
+        paths = tree.paths
+        truncated = tree.truncated
+        foldersOnly = tree.foldersOnly
+    }
+
+    /// Shallow listing when the session tree fails: cwd, then home, then `/`.
+    private func shallowFallback() async -> Tabsh.Tree? {
+        var candidates: [String] = []
+        if let cwd = sessions.sessions[sessionID]?.cwd, !cwd.isEmpty {
+            candidates.append(cwd)
+        }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if !candidates.contains(home) { candidates.append(home) }
+        if !candidates.contains("/") { candidates.append("/") }
+        for path in candidates {
+            if let tree = try? await Tabsh.tree(path: path), !tree.paths.isEmpty {
+                return tree
+            }
+        }
+        return nil
+    }
+
+    /// Whether `folder` already has a direct child in the listing.
+    private func hasDirectChild(_ folder: String) -> Bool {
+        paths.contains { relative in
+            let clean = relative.hasSuffix("/") ? String(relative.dropLast()) : relative
+            guard !clean.isEmpty, clean != folder else { return false }
+            let parent = clean.contains("/")
+                ? String(clean[..<clean.lastIndex(of: "/")!])
+                : ""
+            return parent == folder
+        }
+    }
+
+    /// Fetch what sits under each newly opened folder when the listing is
+    /// only a summary (home, `/`, or any truncated root).
+    private func loadOpenedFolders(_ open: Set<String>) async {
+        guard foldersOnly || truncated else { return }
+        for folder in open where dirs.contains(folder) {
+            guard !hasDirectChild(folder), !loadingFolders.contains(folder) else { continue }
+            loadingFolders.insert(folder)
+            defer { loadingFolders.remove(folder) }
+            let abs = absolute(folder)
+            guard let tree = try? await Tabsh.tree(path: abs) else { continue }
+            let prefix = folder.isEmpty ? "" : folder + "/"
+            let added = tree.paths.map { prefix + $0 }
+            paths = TabshTreePaths.applying(add: added, remove: [], to: paths)
+            // A subfolder that is itself huge stays a summary: keep the
+            // truncated flag so opening its children still loads.
+            if tree.truncated || tree.foldersOnly {
+                truncated = true
+                foldersOnly = true
+            }
         }
     }
 
@@ -536,12 +658,14 @@ private struct TreeRows: View {
     let base: String
     @Binding var expanded: Set<String>
     @Binding var hovered: String?
+    let loadingFolders: Set<String>
     let open: (Node) -> Void
 
     var body: some View {
         let isOpen = expanded.contains(node.path)
+        let loading = loadingFolders.contains(node.path)
         FileRow(node: node, depth: depth, showsPath: false, expanded: isOpen,
-                base: base, hovered: hovered == node.path,
+                base: base, hovered: hovered == node.path, loading: loading,
                 onHover: { over in
                     if over { hovered = node.path }
                     else if hovered == node.path { hovered = nil }
@@ -556,8 +680,20 @@ private struct TreeRows: View {
                     }
                 })
         if node.isDir, isOpen {
+            if loading && node.children.isEmpty {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text("Loading…")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Palette.faint)
+                }
+                .padding(.leading, CGFloat(depth + 1) * 12 + 9)
+                .padding(.vertical, 3)
+            }
             ForEach(node.children) { child in
-                TreeRows(node: child, depth: depth + 1, base: base, expanded: $expanded, hovered: $hovered, open: open)
+                TreeRows(node: child, depth: depth + 1, base: base,
+                         expanded: $expanded, hovered: $hovered,
+                         loadingFolders: loadingFolders, open: open)
             }
         }
     }
@@ -570,6 +706,7 @@ private struct FileRow: View {
     let expanded: Bool
     let base: String
     let hovered: Bool
+    var loading: Bool = false
     let onHover: (Bool) -> Void
     let onTap: () -> Void
 
@@ -594,6 +731,9 @@ private struct FileRow: View {
                 .lineLimit(1)
                 .truncationMode(showsPath ? .head : .middle)
             Spacer(minLength: 0)
+            if loading {
+                ProgressView().controlSize(.mini)
+            }
         }
         .padding(.vertical, 3)
         // Edge to edge inside the panel, a step per level: the rows line up

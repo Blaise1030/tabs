@@ -135,7 +135,7 @@ struct AgentComposer: View {
             .padding(16)
             .frame(width: 620)
             .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Palette.ground)
                     .shadow(color: .black.opacity(0.07), radius: 18, y: 4)
             )
@@ -144,7 +144,7 @@ struct AgentComposer: View {
                 // that says where the card starts, not a heavy frame. A
                 // drop lights the accent so the card claims the files
                 // before the terminal behind it ever could.
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(
                         droppingFiles
                             ? Color(nsColor: .controlAccentColor).opacity(0.55)
@@ -452,12 +452,17 @@ struct AgentComposer: View {
                 }
                 let combined = withImages(text, paths)
                 let session: Tabsh.Session
-                if mode == "ui", status != "backlog", modelID != nil {
+                // UI cards always go through createChat — even with no model
+                // picked yet (the agent keeps its default). The old gate on
+                // `modelID != nil` fell through to createAgent, which only
+                // stores the prompt on the session and never posts it as a
+                // chat message, so the new pane opened empty.
+                if mode == "ui", status != "backlog" {
                     // The chosen model only means something if it is set on
                     // the agent before the prompt goes in; otherwise the
                     // agent answers its first turn as its default.
                     session = try await Tabsh.createChat(
-                        cwd: folder, name: title(for: text), prompt: combined,
+                        cwd: folder, name: title(for: text),
                         provider: provider, model: modelID,
                         mode: hasAgentModes ? agentModeID : nil)
                 } else {
@@ -476,6 +481,12 @@ struct AgentComposer: View {
                     : InternalPage(.tabsh, session.id)
                 let tab = browser.show(page)
                 if let group { browser.move(tab, toGroup: group) }
+                // Hand the New Agent words to the live chat after the pane
+                // exists, so they show up as the first bubble (and so a
+                // prompt written with no model still arrives).
+                if mode == "ui", status != "backlog", !combined.isEmpty {
+                    TabshChats.shared.chat(for: session.id).send(combined)
+                }
                 browser.putAway(.agentComposer)
             } catch {
                 failure = error.localizedDescription
