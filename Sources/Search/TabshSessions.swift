@@ -841,7 +841,8 @@ struct TabshStatusPanel: View {
     }
 
     /// The magnifying glass overlaid on the list (top trailing), so a
-    /// closed search takes no row under the grip.
+    /// closed search takes no row under the grip. Its disc is the panel's
+    /// own ground, so the first group's fold chevron cannot show through.
     private var searchToggle: some View {
         Button {
             withAnimation(Motion.settle) { searching = true }
@@ -853,7 +854,8 @@ struct TabshStatusPanel: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(!query.isEmpty ? Palette.ink : Palette.muted)
                 .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
+                .background(ground, in: Circle())
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .help("Search sessions")

@@ -1,19 +1,64 @@
-# Search
+# Tabs
 
-> **This repository is the tabsh-browser fork.** See [FORK.md](FORK.md) for what differs and
-> how tabsh is being integrated. The README below describes the upstream Search app.
+A macOS WebKit browser with [tabsh](https://tabsh.cc) built in — a fork of
+[Search](https://github.com/driceroland/Search). See [FORK.md](FORK.md) for identity,
+integration status, and how this differs from upstream.
 
-A small, fast, quiet web browser for the Mac, by [Office Commun](https://officecommun.com).
+## Run it
 
-![Search, with its tabs down the left and a page taking the rest of the window](.github/screenshot.png)
+Needs **macOS 14+** and the full **Xcode 16 / Swift 6** toolchain (Command Line Tools alone
+are not enough: `swift build` fails on the `SwiftUIMacros` plugin). Agree to Xcode's license
+once if you have not already:
 
-**[Download for macOS →](https://searchbrowser.app)** · macOS 14 or later · free · about 9 MB
+```sh
+sudo xcodebuild -license accept
+```
 
-Or with [Homebrew](https://brew.sh): `brew install --cask driceroland/tap/search`
+Then build and open:
+
+```sh
+./build.sh                 # release-style Tabs.app in build/, ad-hoc signed
+open build/Tabs.app
+```
+
+For day-to-day work, prefer an isolated dev build (yellow icon, named for the branch, its own
+bundle id, Application Support folder, and tabsh daemon port — see [FORK.md](FORK.md)):
+
+```sh
+SEARCH_DEV=1 ./build.sh
+open build/Tabs.app
+```
+
+`swift build` also works and runs the SwiftPM binary directly; `./build.sh` is what you want
+for a double-clickable app and a bundled tabsh daemon (pass `TABSH_BINARY=/path/to/tabsh` if
+you built the daemon yourself; CI does this automatically).
+
+Builds here are ad-hoc signed, not notarized. First launch on another Mac may need
+right-click → Open, or:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Tabs.app
+```
+
+To try a clean first-run without touching your real session: `./fresh.sh` (or
+`./fresh.sh again` to reopen the test world as left).
+
+GitHub Actions can produce downloadable `Tabs.zip` / `Tabs.dmg` — see Building in
+[FORK.md](FORK.md). Deeper layout, testing with `./bench`, and contributing notes follow
+below (still largely upstream Search docs).
 
 ---
 
-## What it is
+## What it is (upstream Search)
+
+A small, fast, quiet web browser for the Mac, by [Office Commun](https://officecommun.com).
+The product goal of this fork is different: a tabsh session is a browser tab. The copy
+below still describes the Search base.
+
+![Search, with its tabs down the left and a page taking the rest of the window](.github/screenshot.png)
+
+Upstream download: **[searchbrowser.app](https://searchbrowser.app)** · or
+`brew install --cask driceroland/tap/search`
 
 Search is a browser with nothing in the way. A row of tabs — across the top or down the left, your choice — and the page. There is no toolbar, no start page, no sidebar of suggestions, no account to sign into, nothing that wants your attention. You type an address or a few words in one field and you are on the page.
 
@@ -86,13 +131,17 @@ So anyone can read exactly what a browser handling their passwords and history i
 
 ### Building it
 
-- macOS 14 or later, Xcode 16 / Swift 6 toolchain
-- `swift build` — runs the app straight from the SwiftPM binary
-- `./build.sh` — assembles a real, double-clickable `Search.app` in `build/`, ad-hoc signed so it runs on your own Mac. `SEARCH_DEV=1 ./build.sh` makes it a dev build, on a yellow icon and named for its branch (`Search-split-view` from `claude/split-view-4a6927`), so it's never mistaken for an installed Search or for another worktree's build; `SEARCH_FEATURE=name` picks the name. It shares the installed app's settings and its bundle id, so while both run, a link from another app may land in either
+See **[Run it](#run-it)** above for the short path. In this fork the app is **Tabs**
+(`build/Tabs.app`, bundle id `cc.tabsh.browser`). Details that matter day to day:
 
-A build you make yourself won't be notarized or carry Office Commun's Developer ID, so the first launch needs a right-click → Open (or an allow in System Settings → Privacy & Security). That's expected — it's the same thing that happens with any app that isn't from the App Store or a notarized DMG. Your own build also keeps its passwords apart from a signed Search's: the keychain tells the two apart by their signatures.
-
-`./build.sh release dmg` also makes `Search.dmg` / `Search.zip`. `./build.sh release ship` additionally notarizes and staples — that step needs a Developer ID certificate and Apple credentials, so it only really does anything for Office Commun's own releases.
+- `SEARCH_DEV=1 ./build.sh` — isolated dev build (yellow icon, branch name like
+  `Tabs-split-view`, bundle id `cc.tabsh.browser.dev`, data under
+  `~/Library/Application Support/tabsh-browser-dev`, daemon on port 7683).
+  `SEARCH_FEATURE=name` picks the name. A plain `./build.sh` is the release-style app
+  people use here every day (`cc.tabsh.browser`, `tabsh-browser/`, port 7682).
+- `./build.sh release dmg` also makes `Tabs.dmg` / `Tabs.zip`. Upstream's
+  `./build.sh release ship` notarizes and staples; that needs a Developer ID and Apple
+  credentials, and is not set up for this fork yet (updater is off — see [FORK.md](FORK.md)).
 
 ### How it's put together
 
