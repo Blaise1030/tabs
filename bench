@@ -164,16 +164,23 @@ def clean(text):
     return re.sub(r"[\x00-\x1f\x7f\u200e\u200f\u202a-\u202e\u2066-\u2069]", "", str(text or ""))
 
 def folder(world):
-    name = f"Search ({world})" if world else "Search"
-    return os.path.expanduser(f"~/Library/Application Support/{name}")
+    # The fork keeps its data under tabsh-browser (or tabsh-browser-dev for a
+    # SEARCH_DEV build). Pick whichever one has a live bench socket.
+    names = ["tabsh-browser", "tabsh-browser-dev"]
+    paths = [os.path.expanduser(
+        f"~/Library/Application Support/{n}{f' ({world})' if world else ''}") for n in names]
+    for path in paths:
+        if os.path.exists(os.path.join(path, "bench.sock")):
+            return path
+    return paths[0]
 
 def ask(path, request):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
         try:
             s.connect(path)
         except (FileNotFoundError, ConnectionRefusedError):
-            sys.exit("Search isn't listening — is it open, with Settings › General › "
-                     "“Let a script drive Search” on?")
+            sys.exit("Tabs isn't listening — is it open, with Settings › General › "
+                     "“Let a script drive Tabs” on?")
         s.sendall((json.dumps(request) + "\n").encode())
         chunks = []
         while True:
