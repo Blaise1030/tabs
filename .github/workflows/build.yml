@@ -96,8 +96,11 @@ jobs:
           path: |
             .build
             ~/Library/Caches/org.swift.swiftpm
-          key: swiftpm-${{ matrix.arch }}-${{ hashFiles('Package.resolved') }}
-          restore-keys: swiftpm-${{ matrix.arch }}-
+          # The repository name is part of the key because SwiftPM records
+          # absolute module-cache paths inside .build; a renamed repository
+          # (tabsh-browser → tabs) must not restore the old checkout's cache.
+          key: swiftpm-${{ matrix.arch }}-${{ github.repository }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: swiftpm-${{ matrix.arch }}-${{ github.repository }}-
 
       # tabsh is public, so no token is needed. A branch, tag or commit all
       # work; the commit is printed and lands in the release notes. Cloned
