@@ -266,6 +266,12 @@ jobs:
             -exec cp {} out/ \;
           COUNT="$(find out -type f | wc -l | tr -d ' ')"
           [ "$COUNT" -ge 2 ] || { echo "only $COUNT files to release" >&2; ls -R dist >&2; exit 1; }
+          # Stable names browser.tabsh.cc links to, so the site never has to
+          # know a version. The versioned files stay for the notes and checksums.
+          if [ -f "out/Tabs-$VERSION-arm64.dmg" ]; then cp "out/Tabs-$VERSION-arm64.dmg" out/Tabs.dmg; fi
+          if [ -f "out/Tabs-$VERSION-arm64.zip" ]; then cp "out/Tabs-$VERSION-arm64.zip" out/Tabs.zip; fi
+          if [ -f "out/Tabs-$VERSION-x86_64.dmg" ]; then cp "out/Tabs-$VERSION-x86_64.dmg" out/Tabs-intel.dmg; fi
+          if [ -f "out/Tabs-$VERSION-x86_64.zip" ]; then cp "out/Tabs-$VERSION-x86_64.zip" out/Tabs-intel.zip; fi
           (cd out && sha256sum ./* > SHA256SUMS.txt && ls -lh)
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
