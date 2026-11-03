@@ -2156,6 +2156,7 @@ final class Browser: NSObject, ObservableObject {
             Shield.shared.enabled = prefs.shielded
             Shield.shared.compile()
             if #available(macOS 15.4, *) { Extensions.shared.start(for: self) }
+            TabshAgentSocket.shared.start(for: self)
             if prefs.bench {
                 Bench.shared.start(for: self)
             } else if prefs.benchRefused {
@@ -7469,9 +7470,9 @@ extension Browser {
     /// never private, as Chrome's settings never open in an incognito
     /// window — and the page opens beside it.
     @discardableResult
-    func show(_ page: InternalPage, inheritingGroup: Bool = false) -> Tab {
+    func show(_ page: InternalPage, inheritingGroup: Bool = false, focus: Bool = true) -> Tab {
         // A pop-up window holds its one page: Tabs' own open beside it.
-        if websitePopup { return tabDestination.show(page) }
+        if websitePopup { return tabDestination.show(page, focus: focus) }
         // A page opened from a tab that lives in a group (a file chosen in
         // the terminal's explorer) belongs to that group too, rather than
         // appearing loose at the end of the row.
@@ -7497,7 +7498,7 @@ extension Browser {
                 objectWillChange.send()
             }
         } else {
-            if let blank = active, blank.isBlank, !blank.shy, !blank.bench, blank.pin == nil,
+            if focus, let blank = active, blank.isBlank, !blank.shy, !blank.bench, blank.pin == nil,
                blank.draft.isEmpty, typed.isEmpty {
                 tab = blank
             } else {
@@ -7510,11 +7511,13 @@ extension Browser {
         if let sourceGroup {
             tab.groupID = sourceGroup
         }
-        if launching { dismiss() }
-        summoning = false
-        editing = false
-        typed = ""
-        if activeID != tab.id { select(tab) }
+        if focus {
+            if launching { dismiss() }
+            summoning = false
+            editing = false
+            typed = ""
+            if activeID != tab.id { select(tab) }
+        }
         TabshSessions.shared.attach(tab)
         writeSessionSoon()
         return tab

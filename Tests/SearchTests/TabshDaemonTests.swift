@@ -23,6 +23,21 @@ final class TabshDaemonTests: XCTestCase {
         XCTAssertTrue(folders.contains("/bin"))
     }
 
+    func testSetupPromptPointsAgentsAtTabsctl() {
+        // The onboarding prompt Welcome copies (and opens a setup card with)
+        // must hand agents both halves: `tabsh setup` for the hooks, and
+        // `tabsctl` — never the daemon API — for creating sessions, recorded
+        // in the same persistent instructions the guide has them write.
+        let prompt = TabshDaemon.setupPrompt
+        XCTAssertTrue(prompt.contains("setup` and follow"))
+        XCTAssertTrue(prompt.contains("tabsctl new --agent --prompt '<task>'"))
+        XCTAssertTrue(prompt.contains("tabsctl new --terminal"))
+        XCTAssertTrue(prompt.contains("tabsctl sessions"))
+        XCTAssertTrue(prompt.contains("tabsctl open <id>"))
+        XCTAssertTrue(prompt.contains("do not create sessions by"))
+        XCTAssertTrue(prompt.contains("same persistent instructions"))
+    }
+
     func testDaemonPathHasNoRepeats() {
         let folders = TabshDaemon.daemonPath.split(separator: ":").map(String.init)
         XCTAssertEqual(folders.count, Set(folders).count)

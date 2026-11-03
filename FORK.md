@@ -207,6 +207,16 @@ agent chat. The tabsh **daemon** is the one external piece:
 - **It outlives the app on purpose**: tabsh's promise is that shells stay up when the tab,
   the window and the app go away, so quitting the browser does not stop it. A later launch
   reuses it.
+- **`tabsctl`, a session CLI of the browser's own** (done): a separate signed binary in
+  `Contents/Resources/` (`Sources/TabsCLI/`, a SwiftPM executable next to `Search` — not
+  part of the tabsh repo), linked beside `tabsh` in the daemon's `bin` folder so an agent
+  in any session shell finds it on `PATH`. `tabsctl new --agent --prompt …` /
+  `tabsctl new --terminal` speaks one JSON line to the browser's `agent.sock`
+  (`TabshAgentSocket.swift`, uid-checked, sessions only — not the bench), the browser
+  creates the session through the composer's own paths and opens its tab in the
+  background (`--focus` to select it); `tabsctl sessions` and `tabsctl open <id>` list
+  and reopen. With Tabs not running it fails rather than leaving an orphan card;
+  `--card-only` creates the card on the daemon directly.
 
 Packaging concerns still to settle: signing/notarizing the embedded daemon as a helper,
 updating it with the app through the same signed feed, the extra binary size, and offering

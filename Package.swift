@@ -22,6 +22,15 @@ let package = Package(
             // here but ceremony.
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // tabsctl: the separate CLI an agent in a session runs to create a
+        // sibling session (see Sources/TabsCLI/main.swift). It cannot import
+        // the Search executable, so its socket protocol is duplicated there
+        // by design and pinned by TabsctlContractTests.
+        .executableTarget(
+            name: "TabsCLI",
+            path: "Sources/TabsCLI",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .testTarget(
             name: "SearchTests",
             dependencies: ["Search"],

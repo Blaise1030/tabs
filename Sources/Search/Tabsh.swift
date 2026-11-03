@@ -341,6 +341,11 @@ enum Tabsh {
         Provider(name: "muse", command: "muse {prompt}",
                  resume: "muse resume {session}",
                  acp: "muse -- --acp"),
+        // `grok agent stdio` is Grok's ACP seat; `-r` takes the session id
+        // tabsh minted, as the other resumes take theirs.
+        Provider(name: "Grok", command: "grok {prompt}",
+                 resume: "grok --resume {session}",
+                 acp: "grok agent stdio"),
     ]
 
     static func settings() async throws -> Settings {

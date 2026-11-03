@@ -76,7 +76,13 @@ final class TabshDaemon {
         until I answer. Once I pick one, run \
         `TABSH_URL=http://127.0.0.1:\(port) \(quoted) setup` and follow the \
         guide it prints — configure only that CLI so its cards stay current \
-        on Tabs.
+        on Tabs. Also add this to the same persistent instructions the guide \
+        has you write: inside a Tabs session, `tabsctl` is on PATH — create a \
+        sibling session with `tabsctl new --agent --prompt '<task>'` or \
+        `tabsctl new --terminal`, list sessions with `tabsctl sessions`, and \
+        reopen one with `tabsctl open <id>`; do not create sessions by \
+        calling the tabsh daemon's API directly. Verify it once with \
+        `tabsctl sessions` and say in your report that you did.
         """
         .replacingOccurrences(of: "\n", with: " ")
     }
@@ -234,10 +240,19 @@ final class TabshDaemon {
     /// Points `binFolder/tabsh` at the copy in this bundle. A symlink gives
     /// `tabsh setup` a stable path to name and follows the app when it is
     /// updated in place; a moved app gets a new link at the next launch.
+    /// `tabsctl`, this browser's own session CLI, is linked the same way so
+    /// an agent in any session shell finds it with no separate install.
     private func linkBundledCLI(_ binary: URL) {
         let folder = TabshDaemon.binFolder
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let link = folder.appendingPathComponent("tabsh")
+        link(binary, as: "tabsh", in: folder)
+        if let tabsctl = Bundle.main.url(forResource: "tabsctl", withExtension: nil) {
+            link(tabsctl, as: "tabsctl", in: folder)
+        }
+    }
+
+    private func link(_ binary: URL, as name: String, in folder: URL) {
+        let link = folder.appendingPathComponent(name)
         if let target = try? FileManager.default.destinationOfSymbolicLink(atPath: link.path),
            target == binary.path {
             return
@@ -273,6 +288,7 @@ final class TabshDaemon {
         try? FileManager.default.createDirectory(at: TabshDaemon.stateFolder,
                                                  withIntermediateDirectories: true)
         environment["TABSH_DB"] = TabshDaemon.databasePath.path
+        environment["TABSH_URL"] = "http://127.0.0.1:\(TabshDaemon.port)"
         environment["PORT"] = String(TabshDaemon.port)
         // The shells and agents the daemon starts inherit its PATH (see
         // `binFolder` and `daemonPath`): this app's own `tabsh` comes first,

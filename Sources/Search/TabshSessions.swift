@@ -217,7 +217,8 @@ private struct TabshHeaderStatusList: View {
 /// the same move/delete menu on both. `title` is the card's own name (see
 /// `Tabsh.SessionInfo.label`), so both surfaces say which card they are, not
 /// just which agent runs it. `accessory` is for a header-only control: the
-/// chat puts its status select there, and the terminal leaves it empty.
+/// chat puts its status select there, and the terminal puts the live state
+/// its agent's own title reports (see `TabshAgentActivityPill`).
 struct TabshSessionHeader<Accessory: View>: View {
     let sessionID: String
     let title: String
@@ -1160,6 +1161,7 @@ final class TabshSessions: ObservableObject {
         session.status = status.rawValue
         session.statusAt = Int(Date().timeIntervalSince1970)
         sessions[id] = session
+        updateTabs()
         Task { try? await Tabsh.setStatus(id, status.rawValue) }
     }
 
@@ -1222,10 +1224,16 @@ final class TabshSessions: ObservableObject {
         reloadTask = Task { @MainActor [weak self] in
             guard let self else { return }
             guard let list = try? await Tabsh.boardSessions() else { return }
-            self.sessions = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
-            self.updateTabs()
+            self.install(list)
             self.closeOrphans()
         }
+    }
+
+    /// The daemon's list, taken as the board's truth: every open session
+    /// tab wears its card's latest status, name and note from here.
+    func install(_ list: [Tabsh.SessionInfo]) {
+        sessions = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
+        updateTabs()
     }
 
     /// A session tab whose card is not on this browser's daemon can never
@@ -1269,7 +1277,15 @@ final class TabshSessions: ObservableObject {
     }
 
     private func connect() {
-        guard !stopped, let request = Tabsh.boardEventsRequest() else { return }
+        guard !stopped else { return }
+        guard let request = Tabsh.boardEventsRequest() else {
+            // No token yet: the daemon this same launch started has not
+            // written one. Ask again in a moment rather than leaving the
+            // board unheard for the whole launch — without the socket, a
+            // hook's status move never reaches the tabs' badges.
+            scheduleReconnect()
+            return
+        }
         socket?.cancel(with: .goingAway, reason: nil)
         let task = URLSession.shared.webSocketTask(with: request)
         socket = task
@@ -1291,16 +1307,23 @@ final class TabshSessions: ObservableObject {
                     self.receive()
                 case .failure:
                     self.socket = nil
-                    self.retry?.cancel()
-                    let work = DispatchWorkItem { [weak self] in
-                        guard let self, self.started, !self.stopped else { return }
-                        self.connect()
-                    }
-                    self.retry = work
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+                    self.scheduleReconnect()
                 }
             }
         }
+    }
+
+    /// One more try at the board socket, a moment from now. The one path
+    /// both a failed socket and a not-yet-paired daemon take back to
+    /// `connect()` (and, through it, to a fresh `refresh()`).
+    private func scheduleReconnect() {
+        retry?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.started, !self.stopped else { return }
+            self.connect()
+        }
+        retry = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
     }
 
     private func handle(_ message: URLSessionWebSocketTask.Message) {
@@ -1313,6 +1336,13 @@ final class TabshSessions: ObservableObject {
         @unknown default:
             return
         }
+        applyBoardEvent(data)
+    }
+
+    /// One board event, as the daemon sends it: an activity note naming a
+    /// terminal under `session`, or a card change with `id` and `status`.
+    /// A card change lands on its tab's badge through `updateTabs()`.
+    func applyBoardEvent(_ data: Data) {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return
         }

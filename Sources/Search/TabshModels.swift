@@ -1,5 +1,33 @@
 import Foundation
 
+/// A hover that has come to rest. Probing a provider makes a throwaway
+/// session, so it must not start while the pointer is only sliding across
+/// the menu: each new row replaces the pending offer, and leaving the menu
+/// cancels it. Only the row still offered when the dwell runs out is probed.
+@MainActor
+final class TabshProbeDwell {
+    private let delay: Duration
+    private var task: Task<Void, Never>?
+
+    init(delay: Duration = .milliseconds(600)) {
+        self.delay = delay
+    }
+
+    func offer(_ key: String, action: @escaping @MainActor () async -> Void) {
+        task?.cancel()
+        task = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled else { return }
+            await action()
+        }
+    }
+
+    func cancel() {
+        task?.cancel()
+        task = nil
+    }
+}
+
 /// The models and modes each agent advertises, for the New Agent card.
 ///
 /// The daemon only knows these while a chat is live — `session/new` is where
@@ -21,6 +49,7 @@ final class TabshModels: ObservableObject {
 
     private var loading = false
     private var asked = Set<String>()
+    private let probeDwell = TabshProbeDwell()
     private let savedKey = "tabsh.agent.selects"
 
     private struct Saved: Codable {
@@ -76,6 +105,20 @@ final class TabshModels: ObservableObject {
             }
         }
         save()
+    }
+
+    /// Offer a provider for probing once the pointer rests on it (see
+    /// `TabshProbeDwell`): sliding across the menu offers each row in turn
+    /// and cancels the last, so no session is made for a row only passed over.
+    func offer(provider: Tabsh.Provider, cwd: String) {
+        probeDwell.offer(provider.name) { [weak self] in
+            await self?.load(provider: provider, cwd: cwd)
+        }
+    }
+
+    /// The menu went away before the pointer rested: nothing is probed.
+    func cancelOffer() {
+        probeDwell.cancel()
     }
 
     /// Ask the agent itself, the first time this provider is opened. The

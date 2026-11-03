@@ -42,6 +42,17 @@ struct TabshTerminalPane: View {
     @ObservedObject var browser: Browser
     @ObservedObject private var sessions = TabshSessions.shared
     @ObservedObject private var terminalSettings = TerminalPreferences.shared
+    /// The shell behind the pane, watched for the state its own title
+    /// reports (see TabshAgentActivity): the header reacts to the agent
+    /// itself, with no tabsh hooks in between.
+    @ObservedObject private var terminal: TabshTerminal
+
+    init(sessionID: String, tab: Tab, browser: Browser) {
+        self.sessionID = sessionID
+        self.tab = tab
+        _browser = ObservedObject(wrappedValue: browser)
+        _terminal = ObservedObject(wrappedValue: TabshTerminals.shared.terminal(for: sessionID))
+    }
     /// An agent TUI keeps the files column shut until asked for, same as the
     /// UI agent pane (and shares that choice). A plain shell still opens it.
     @AppStorage("tabsh.agent.explorer") private var agentShowingExplorer = false
@@ -67,8 +78,10 @@ struct TabshTerminalPane: View {
 
     private var session: Tabsh.SessionInfo? { sessions.info(for: sessionID) }
     /// An agent in a terminal still wears the chat's header — name,
-    /// move/delete — so a TUI card and a UI card read the same way. Its status
-    /// select is the chat's alone, so the two panes don't both say the state.
+    /// move/delete — so a TUI card and a UI card read the same way. The
+    /// card's status select is the chat's alone; this header instead wears
+    /// the live state the agent's own terminal title reports (see
+    /// `terminal.activity`), which needs no hooks and never moves the card.
     /// A plain shell has none of that, and only floats the explorer button
     /// when shut.
     private var hasAgent: Bool { session?.hasAgent == true }
@@ -100,7 +113,10 @@ struct TabshTerminalPane: View {
                         title: session?.label ?? "Agent",
                         showingExplorer: showingExplorer
                     ) {
-                        EmptyView()
+                        if let activity = terminal.activity {
+                            TabshAgentActivityPill(activity: activity,
+                                                   title: terminal.agentTitle)
+                        }
                     }
                     // Same ground as the shell and explorer, so the header
                     // is part of the TUI column rather than a chrome strip.

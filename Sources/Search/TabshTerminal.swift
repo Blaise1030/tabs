@@ -75,11 +75,122 @@ final class TabshTerminals {
     }
 }
 
+/// What an agent in a terminal is doing, read from the title it sets for
+/// itself (OSC 0/2, SwiftTerm's `setTerminalTitle`). This is the agent's
+/// own word, not the card's: it needs no tabsh hooks, and it never moves
+/// the card — the header wears it as a live indicator beside the card's
+/// hook-driven state on the tab badge.
+///
+/// Agents title the same few ways: a braille (or rotating-circle) spinner
+/// while a turn runs, a still mark (`✳`, a tick) at rest, and plain words
+/// when they are blocked on the person. Anything else — a plain shell's
+/// `user@host: ~/folder` — says nothing and leaves the header bare.
+/// The spinner is checked before the words: a working agent's title is a
+/// summary of its task, so "Fix the permission bug" under a spinner is
+/// work, not a request, and the still `✳` is checked before the working
+/// words for the same reason.
+enum TabshAgentActivity: Equatable {
+    case working
+    case needsInput
+    case ready
+
+    init?(title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first else { return nil }
+        if first.unicodeScalars.first.map({ (0x2800...0x28FF).contains($0.value) }) == true
+            || "◐◓◑◒◍◌⟳↻".contains(first) {
+            self = .working
+            return
+        }
+        let words = trimmed.lowercased()
+        let waiting = [
+            "waiting for input", "waiting for your input", "needs input",
+            "needs your input", "awaiting input", "awaiting your",
+            "permission requested", "requesting permission",
+            "waiting for permission", "waiting for approval",
+            "approval requested", "(y/n)", "[y/n]", "press enter",
+            "do you want to proceed", "would you like to proceed",
+        ]
+        if waiting.contains(where: words.contains) {
+            self = .needsInput
+            return
+        }
+        if "✳✓✔".contains(first) {
+            self = .ready
+            return
+        }
+        let working = ["working", "thinking", "processing", "generating",
+                       "running…", "running..."]
+        if working.contains(where: words.contains) {
+            self = .working
+            return
+        }
+        let atRest = ["done", "finished", "completed", "ready", "idle"]
+        if atRest.contains(where: words.contains) {
+            self = .ready
+            return
+        }
+        return nil
+    }
+
+    var label: String {
+        switch self {
+        case .working: return "Working"
+        case .needsInput: return "Needs input"
+        case .ready: return "Ready"
+        }
+    }
+}
+
+/// The header's live read of the agent's own title: a spinner while it
+/// works, the asking mark when it is blocked, a tick at rest. Read-only —
+/// moving the card stays with the header's menu and the chat's select.
+struct TabshAgentActivityPill: View {
+    let activity: TabshAgentActivity
+    /// The full title the state was read from, for the help text.
+    var title: String?
+
+    var body: some View {
+        HStack(spacing: 5) {
+            switch activity {
+            case .working:
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.65)
+                    .frame(width: 11, height: 11)
+            case .needsInput:
+                Image(systemName: "questionmark.circle.fill")
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(Palette.unsafe)
+            case .ready:
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(Palette.safe)
+            }
+            Text(activity.label)
+                .foregroundStyle(Palette.ink)
+        }
+        .font(.system(size: 10.5, weight: .medium))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(Palette.hover))
+        .fixedSize()
+        .help(title ?? activity.label)
+        .accessibilityLabel("Agent")
+        .accessibilityValue(activity.label)
+    }
+}
+
 @MainActor
 final class TabshTerminal: NSObject, ObservableObject, TerminalViewDelegate {
     let sessionID: String
     let view: TerminalView
     @Published private(set) var exited = false
+    /// The agent's state as its own terminal title reports it, and that
+    /// title. Updated only when the state changes: a spinner retitles the
+    /// terminal every frame, and the header must not rebuild with it.
+    @Published private(set) var activity: TabshAgentActivity?
+    @Published private(set) var agentTitle: String?
 
     private var socket: URLSessionWebSocketTask?
     private var stopped = false
@@ -278,7 +389,14 @@ final class TabshTerminal: NSObject, ObservableObject, TerminalViewDelegate {
 
     func setTerminalTitle(source: TerminalView, title: String) {
         // The card's own name is the browser tab's; a shell's OSC title
-        // changes too often to steal it.
+        // changes too often to steal it. What it does say is what the
+        // agent is doing right now, and the pane's header wears that (see
+        // TabshAgentActivity) — for an agent's session, not a plain shell,
+        // whose titles the classifier leaves alone either way.
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if agentTitle != trimmed { agentTitle = trimmed }
+        let next = TabshAgentActivity(title: title)
+        if activity != next { activity = next }
     }
 
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}

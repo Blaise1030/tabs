@@ -852,7 +852,7 @@ private struct ModelMenu: View {
                             .onHover { inside in
                                 guard inside else { return }
                                 hovering = provider.name
-                                Task { await directory.load(provider: provider, cwd: cwd) }
+                                directory.offer(provider: provider, cwd: cwd)
                             }
                         }
                     }
@@ -872,10 +872,11 @@ private struct ModelMenu: View {
         .onAppear {
             hovering = selectedProvider
             if let provider = shown {
-                Task { await directory.load(provider: provider, cwd: cwd) }
+                directory.offer(provider: provider, cwd: cwd)
             }
             DispatchQueue.main.async { searching = true }
         }
+        .onDisappear { directory.cancelOffer() }
     }
 
     /// The bar the popover opens with: a magnifying glass, a plain field, and

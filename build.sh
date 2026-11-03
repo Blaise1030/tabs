@@ -203,6 +203,19 @@ else
   echo "tabsh: no daemon at $TABSH_BINARY (set TABSH_BINARY); shipping without it"
 fi
 
+# tabsctl, this browser's own session CLI (Sources/TabsCLI): a separate
+# binary from the tabsh daemon, built by the same `swift build` above and
+# shipped beside it so TabshDaemon can link it into session shells.
+TABSCTL_BINARY="$(swift build "${SWIFTFLAGS[@]}" --show-bin-path)/TabsCLI"
+if [ -f "$TABSCTL_BINARY" ]; then
+  cp "$TABSCTL_BINARY" "$APP/Contents/Resources/tabsctl"
+  chmod +x "$APP/Contents/Resources/tabsctl"
+  echo "tabsctl: $(du -h "$APP/Contents/Resources/tabsctl" | cut -f1) session CLI"
+else
+  echo "tabsctl: no CLI at $TABSCTL_BINARY; shipping without it" >&2
+  exit 1
+fi
+
 # Symbols stay out of the app. The linker leaves every function's name and a
 # map back to the source in the binary — 15,000 entries, more than half of
 # what the app weighed (6.5 MB of binary, 2.7 without them), and nothing the
@@ -377,6 +390,13 @@ if [ -f "$APP/Contents/Resources/tabsh" ]; then
     codesign --force --timestamp --options runtime --sign "$IDENTITY" "$APP/Contents/Resources/tabsh"
   else
     codesign --force --sign - "$APP/Contents/Resources/tabsh"
+  fi
+fi
+if [ -f "$APP/Contents/Resources/tabsctl" ]; then
+  if [ -n "$IDENTITY" ]; then
+    codesign --force --timestamp --options runtime --sign "$IDENTITY" "$APP/Contents/Resources/tabsctl"
+  else
+    codesign --force --sign - "$APP/Contents/Resources/tabsctl"
   fi
 fi
 if [ -n "$IDENTITY" ]; then

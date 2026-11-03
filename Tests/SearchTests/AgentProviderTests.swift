@@ -39,4 +39,17 @@ final class AgentProviderTests: XCTestCase {
     func testTheWebAppCapIsADozen() {
         XCTAssertEqual(AgentProviderStore.most, 12)
     }
+
+    /// The defaults a fresh daemon offers: the CLIs a New Agent card can
+    /// start before anyone has saved a list of their own.
+    func testTheStockProvidersOfferTheDefaultAgents() {
+        let names = Tabsh.stockProviders.map(\.name)
+        XCTAssertTrue(names.contains("Cursor CLI"), "stock providers: \(names)")
+        XCTAssertTrue(names.contains("OpenCode"), "stock providers: \(names)")
+
+        let grok = Tabsh.stockProviders.first { $0.name == "Grok" }
+        XCTAssertEqual(grok?.command, "grok {prompt}")
+        XCTAssertEqual(grok?.resume, "grok --resume {session}")
+        XCTAssertEqual(grok?.acp, "grok agent stdio")
+    }
 }
