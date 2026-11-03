@@ -326,6 +326,10 @@ final class TabshChats {
 final class TabshDrafts {
     static let shared = TabshDrafts()
 
+    /// Dictation (menu or ⌥D) wrote into a session's draft from outside the
+    /// composer: the open composer reloads so the field shows the words.
+    static let dictatedName = Notification.Name("tabsh.draft.dictated")
+
     private static let key = "tabshDrafts"
 
     private let store = Store.settings
@@ -349,6 +353,15 @@ final class TabshDrafts {
             texts[session] = text
         }
         store.set(texts, forKey: Self.key)
+    }
+
+    /// Appends settled dictation to a draft and tells any open composer.
+    func appendDictated(_ words: String, for session: String) {
+        guard !words.isEmpty else { return }
+        let current = text(for: session)
+        let gap = current.isEmpty || current.hasSuffix(" ") || current.hasSuffix("\n") ? "" : " "
+        set(current + gap + words, for: session)
+        NotificationCenter.default.post(name: Self.dictatedName, object: session)
     }
 }
 
@@ -878,28 +891,23 @@ struct TabshAgentPane: View {
     private var hasOlder: Bool { hiddenPrefix > 0 }
 
     var body: some View {
-        // The header spans the chat and the explorer, so the status select
-        // and session menu sit at the trailing end of the whole bar rather
-        // than stopping where the conversation column ends.
-        VStack(spacing: 0) {
-            header
-            // The chat keeps the same project column a terminal tab has: the
-            // session's folder, and the files the agent is working in, beside
-            // the conversation rather than in another tab.
-            TabshProjectPane(sessionID: sessionID,
-                             browser: browser,
-                             ground: Palette.ground,
-                             showingExplorer: $showingExplorer) {
-                VStack(spacing: 0) {
-                    transcript
-                    // Draft state lives here, not on the pane: a keystroke used
-                    // to rebuild the whole transcript (and beachball) because
-                    // `@State draft` sat on TabshAgentPane above.
-                    TabshAgentComposer(sessionID: sessionID,
-                                       browser: browser,
-                                       chat: chat,
-                                       scrollToken: $scrollToken)
-                }
+        // Same project column a terminal tab has: the session's folder beside
+        // the conversation. The header lives in the chat column only, so the
+        // explorer runs the full height of the tab (over where the bar was).
+        TabshProjectPane(sessionID: sessionID,
+                         browser: browser,
+                         ground: Palette.ground,
+                         showingExplorer: $showingExplorer) {
+            VStack(spacing: 0) {
+                header
+                transcript
+                // Draft state lives here, not on the pane: a keystroke used
+                // to rebuild the whole transcript (and beachball) because
+                // `@State draft` sat on TabshAgentPane above.
+                TabshAgentComposer(sessionID: sessionID,
+                                   browser: browser,
+                                   chat: chat,
+                                   scrollToken: $scrollToken)
             }
         }
     }
@@ -966,7 +974,18 @@ struct TabshAgentPane: View {
                     // The bottom marker is inside the visible scroll area
                     // while the reader is near the newest message.
                     guard !settlingScroll, !chat.loadingHistory else { return }
-                    pinned = bottom <= outer.size.height + 48
+                    let nearBottom = bottom <= outer.size.height + 48
+                    if nearBottom {
+                        pinned = true
+                    } else if pinned, chat.busy || chat.waiting {
+                        // A streamed token grew the list under a pinned
+                        // viewport before follow could catch up — keep the
+                        // pin and chase the marker rather than treating it
+                        // as the reader scrolling away.
+                        follow(proxy)
+                    } else {
+                        pinned = false
+                    }
                 }
                 .onPreferenceChange(ChatTopKey.self) { top in
                     // The older-page header crossed into view: ask for the
@@ -976,7 +995,7 @@ struct TabshAgentPane: View {
                         loadOlder(using: proxy)
                     }
                 }
-                .onChange(of: chat.rows) { before, after in
+                .onChange(of: chat.rows) { _, after in
                     // A shorter rebuild (rare) must not leave the window
                     // past the end; growing at the bottom keeps the prefix.
                     if hiddenPrefix > after.count {
@@ -984,7 +1003,10 @@ struct TabshAgentPane: View {
                     }
                     if settlingScroll || chat.loadingHistory {
                         jumpToBottom(proxy)
-                    } else if after.count > before.count, pinned {
+                    } else if pinned {
+                        // Streamed `text_delta` rewrites the last agent row
+                        // in place (same count); follow on any change while
+                        // pinned, not only when a new row appears.
                         follow(proxy)
                     }
                 }
@@ -1144,8 +1166,8 @@ struct TabshAgentPane: View {
 
     /// The tab's own bar: shared with the TUI agent pane. The agent's model
     /// and mode are not up here: they sit in the composer, beside the field
-    /// they change (see `selects`). The status select is: it is the card's,
-    /// not the agent's, and the terminal pane leaves the header bare.
+    /// they change (see `selects`). The status select is the card's, not the
+    /// agent's — the terminal header wears the same one.
     private var header: some View {
         TabshSessionHeader(sessionID: sessionID,
                            title: sessions.info(for: sessionID)?.label ?? chat.agentName,
@@ -1216,6 +1238,7 @@ private struct TabshAgentComposer: View {
     @State private var attachments: [TabshPendingAttachment] = []
     @State private var uploading = false
     @State private var droppingFiles = false
+    @ObservedObject private var dictation = Dictation.shared
 
     init(sessionID: String, browser: Browser, chat: TabshChat, scrollToken: Binding<Int>) {
         self.sessionID = sessionID
@@ -1236,14 +1259,14 @@ private struct TabshAgentComposer: View {
             }
 
             // The composer is one card: the attachments, the plus, the
-            // field and the send all live inside its squircle. Drops and
-            // pasted images land as chips here, not as raw paths in the
-            // field (see TabshDrop).
+            // mic, the field and the send all live inside its squircle.
+            // Drops and pasted images land as chips here, not as raw
+            // paths in the field (see TabshDrop).
             VStack(alignment: .leading, spacing: 6) {
                 if !attachments.isEmpty { attachmentBar }
 
-                // The plus and the field sit close: the field's own text
-                // inset is small too (see TabshComposerField), so the
+                // The plus, mic and the field sit close: the field's own
+                // text inset is small too (see TabshComposerField), so the
                 // placeholder starts a few points in from the disc.
                 HStack(alignment: .bottom, spacing: 4) {
                     Button(action: chooseFiles) {
@@ -1256,6 +1279,19 @@ private struct TabshAgentComposer: View {
                     .disabled(uploading)
                     .help("Attach images or files")
                     .accessibilityLabel("Attach images or files")
+
+                    // Same on-device dictation as the New Agent card and
+                    // session terminals: settled words append to the draft.
+                    Button(action: dictate) {
+                        Image(systemName: dictation.busy ? "mic.fill" : "mic")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(dictation.busy ? Color(nsColor: .systemRed) : Palette.muted)
+                            .composerDisc()
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(uploading)
+                    .help(dictation.busy ? "Stop dictating" : "Dictate the message")
+                    .accessibilityLabel(dictation.busy ? "Stop dictating" : "Dictate the message")
 
                     TabshComposerField(text: $draft,
                                        height: $composerHeight,
@@ -1346,6 +1382,25 @@ private struct TabshAgentComposer: View {
         // UserDefaults, which holds it in memory and flushes it on its own.
         .onChange(of: draft) { _, text in
             TabshDrafts.shared.set(text, for: sessionID)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: TabshDrafts.dictatedName)) { note in
+            guard (note.object as? String) == sessionID else { return }
+            draft = TabshDrafts.shared.text(for: sessionID)
+        }
+    }
+
+    /// Speaks the message, on device (see Dictation.swift). Each settled
+    /// piece is appended to the draft, with a space between; the field
+    /// keeps the keyboard throughout.
+    private func dictate() {
+        if dictation.busy {
+            dictation.stop()
+            return
+        }
+        dictation.begin { words in
+            guard !words.isEmpty else { return }
+            let gap = draft.isEmpty || draft.hasSuffix(" ") || draft.hasSuffix("\n") ? "" : " "
+            draft += gap + words
         }
     }
 

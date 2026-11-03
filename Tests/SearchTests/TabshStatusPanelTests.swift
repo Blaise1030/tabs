@@ -12,6 +12,23 @@ final class TabshStatusPanelTests: XCTestCase {
                           mode: "tui", parent: parent, pinned: false)
     }
 
+    func testSessionDragPayloadRoundTrips() {
+        XCTAssertEqual(TabshSessionDrag.payload(for: "abc"), "tabsh-session:abc")
+        XCTAssertEqual(TabshSessionDrag.id(from: "tabsh-session:abc"), "abc")
+        XCTAssertNil(TabshSessionDrag.id(from: "tabsh-session:"))
+        XCTAssertNil(TabshSessionDrag.id(from: "https://example.com"))
+        XCTAssertNil(TabshSessionDrag.id(from: "search-group:xyz"))
+    }
+
+    /// Session rows drag as a private type, so the browser's `.url` / `.text`
+    /// drop targets never light up or open a tab from the panel.
+    func testSessionDragUsesPrivateTypeNotPlainText() {
+        let provider = TabshSessionDrag.provider(for: "abc")
+        XCTAssertTrue(provider.hasItemConformingToTypeIdentifier(TabshSessionDrag.type.identifier))
+        XCTAssertFalse(provider.canLoadObject(ofClass: String.self))
+        XCTAssertFalse(provider.canLoadObject(ofClass: URL.self))
+    }
+
     /// A plain terminal is a card on the daemon like any other, but it has
     /// no agent behind it: the Sessions panel leaves it to the tab list.
     func testOnlyAgentCardsAreListed() {

@@ -4,9 +4,10 @@ import Speech
 import SwiftUI
 
 // Dictation: the Mac's own speech recognition, on this machine and nowhere
-// else, for the two places here a prompt is written by voice — the New Agent
-// card's prompt and a tabsh session's terminal. It is not a browser feature
-// for pages: a page's own dictation is macOS's, and arrives as typing.
+// else, for the places here a prompt is written by voice — the New Agent
+// card's prompt, an agent chat's composer, and a tabsh session's terminal.
+// It is not a browser feature for pages: a page's own dictation is macOS's,
+// and arrives as typing.
 //
 // Two engines behind one small protocol, because the good one is newer than
 // the browser's floor: macOS 26's DictationTranscriber (no time limit, no
@@ -161,15 +162,23 @@ final class Dictation: ObservableObject {
     }
 
     /// The menu's one command: start dictating into the session tab in
-    /// front, or stop if it is already listening. The words are typed into
-    /// the shell, not run — what you said is on the prompt to fix or send.
+    /// front, or stop if it is already listening. An agent chat gets the
+    /// words in its draft; a terminal gets them typed into the shell (not
+    /// run) — what you said is on the prompt to fix or send.
     func toggle(intoSession session: String) {
         if busy {
             stop()
             return
         }
+        let intoAgent = Browsers.all.contains {
+            $0.active?.tabshSessionID == session && $0.active?.page?.kind == .agent
+        }
         begin { words in
-            TabshTerminals.shared.terminal(for: session).view.send(txt: words + " ")
+            if intoAgent {
+                TabshDrafts.shared.appendDictated(words, for: session)
+            } else {
+                TabshTerminals.shared.terminal(for: session).view.send(txt: words + " ")
+            }
         }
     }
 

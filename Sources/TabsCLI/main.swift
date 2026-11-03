@@ -89,6 +89,15 @@ func parse(_ args: [String]) throws -> Options {
 func socketPath(_ options: Options) -> String {
     if let socket = options.socket { return socket }
     if let env = ProcessInfo.processInfo.environment["TABSCTL_SOCKET"], !env.isEmpty { return env }
+    // A shell started by Tabs inherits TABSH_DB; the browser socket sits
+    // beside that folder, so a SEARCH_DEV or probe shell reaches its own
+    // window rather than the installed app's.
+    if let db = ProcessInfo.processInfo.environment["TABSH_DB"], !db.isEmpty {
+        let folder = URL(fileURLWithPath: db)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return folder.appendingPathComponent("agent.sock").path
+    }
     let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     return support.appendingPathComponent("tabsh-browser/agent.sock").path
 }
@@ -155,9 +164,13 @@ func askBrowser(_ request: [String: Any], options: Options) throws -> [String: A
 func daemonBase() -> String {
     let env = ProcessInfo.processInfo.environment
     if let url = env["TABSH_URL"], !url.isEmpty { return url.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
-    // The browser's daemon lives on 7682 with its state under the browser's
-    // folder; a standalone tabsh keeps 7681.
-    if let db = env["TABSH_DB"], db.contains("tabsh-browser") { return "http://127.0.0.1:7682" }
+    // Prefer the URL the daemon stamped into the shell. Falling back: a
+    // SEARCH_DEV Tabs uses 7683 under tabsh-browser-dev; the installed app
+    // uses 7682 under tabsh-browser; standalone tabsh keeps 7681.
+    if let db = env["TABSH_DB"] {
+        if db.contains("tabsh-browser-dev") { return "http://127.0.0.1:7683" }
+        if db.contains("tabsh-browser") { return "http://127.0.0.1:7682" }
+    }
     return "http://127.0.0.1:7681"
 }
 
@@ -168,6 +181,7 @@ func daemonToken() -> String? {
     if let db = env["TABSH_DB"], !db.isEmpty {
         candidates.append(URL(fileURLWithPath: db).deletingLastPathComponent().appendingPathComponent("token"))
     }
+    candidates.append(home.appendingPathComponent("Library/Application Support/tabsh-browser-dev/tabsh/token"))
     candidates.append(home.appendingPathComponent("Library/Application Support/tabsh-browser/tabsh/token"))
     candidates.append(home.appendingPathComponent(".tabsh/token"))
     for url in candidates {

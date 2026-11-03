@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Opens the sessions panel search from a menu or key — same idea as
 /// `TabshExplorerActions.searchFiles` for the project column.
@@ -8,6 +9,34 @@ enum TabshSessionSearchActions {
 
     static func open() {
         NotificationCenter.default.post(name: openName, object: nil)
+    }
+}
+
+/// Dragging a session row between status groups in the sessions panel.
+/// Uses a private type so the browser strip, column and page never take
+/// the drag — open a session by clicking its row, not by dropping it.
+enum TabshSessionDrag {
+    static let prefix = "tabsh-session:"
+    /// In-app only: status columns accept this; `.url` / `.text` drops do not.
+    static let type = UTType(exportedAs: "cc.tabsh.session")
+
+    static func payload(for id: String) -> String { prefix + id }
+
+    static func provider(for id: String) -> NSItemProvider {
+        let provider = NSItemProvider()
+        let payload = payload(for: id)
+        provider.registerDataRepresentation(forTypeIdentifier: type.identifier, visibility: .all) { completion in
+            completion(Data(payload.utf8), nil)
+            return nil
+        }
+        return provider
+    }
+
+    /// The session id in a drag string, or nil when it is not one of ours.
+    static func id(from text: String) -> String? {
+        guard text.hasPrefix(prefix) else { return nil }
+        let id = String(text.dropFirst(prefix.count))
+        return id.isEmpty ? nil : id
     }
 }
 
@@ -122,11 +151,9 @@ struct TabshStatusMenuItems: View {
     }
 }
 
-/// The card's state as a select, worn by the chat header: the state's mark
-/// and name are the value, and the list under it names every state the board
-/// knows, the current one ticked. A terminal header leaves it off — one card
-/// should not say its state twice across the two panes, and the tab's badge
-/// carries it either way.
+/// The card's state as a select, worn by the chat and terminal headers: the
+/// state's mark and name are the value, and the list under it names every
+/// state the board knows, the current one ticked.
 struct TabshHeaderStatusSelect: View {
     let sessionID: String
     @ObservedObject private var sessions = TabshSessions.shared
@@ -216,16 +243,16 @@ private struct TabshHeaderStatusList: View {
 /// The bar above an agent session — chat or terminal — naming the card, with
 /// the same move/delete menu on both. `title` is the card's own name (see
 /// `Tabsh.SessionInfo.label`), so both surfaces say which card they are, not
-/// just which agent runs it. `accessory` is for a header-only control: the
-/// chat puts its status select there, and the terminal puts the live state
-/// its agent's own title reports (see `TabshAgentActivityPill`).
+/// just which agent runs it. `accessory` is for header-only controls: both
+/// panes put the status select there; the terminal also shows live agent
+/// activity beside it (see `TabshAgentActivityPill`).
 struct TabshSessionHeader<Accessory: View>: View {
     let sessionID: String
     let title: String
     @Binding var showingExplorer: Bool
     /// The status list in the trailing `…` menu. False where the header
     /// already wears the status select, so the same states aren't offered
-    /// twice; a terminal header keeps them, having no select of its own.
+    /// twice.
     var statusInMenu = true
     @ViewBuilder var accessory: () -> Accessory
 
@@ -255,13 +282,10 @@ struct TabshSessionHeader<Accessory: View>: View {
             .layoutPriority(0)
             .help(info?.tooltip ?? title)
 
-            // Explorer, status select and `…` — one trailing group, always
-            // flush to the right of the bar.
+            // Status, `…`, then the project folder — one trailing group,
+            // always flush to the right of the bar. The folder opens and
+            // closes the project column.
             HStack(spacing: 8) {
-                if !showingExplorer {
-                    ExplorerShowButton { showingExplorer = true }
-                }
-
                 accessory()
 
                 Menu {
@@ -286,6 +310,8 @@ struct TabshSessionHeader<Accessory: View>: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .help("Session actions")
+
+                ExplorerToggleButton(showing: $showingExplorer)
             }
             .fixedSize(horizontal: true, vertical: false)
             .layoutPriority(1)
@@ -659,10 +685,6 @@ struct TabshStatusPanel: View {
     private static let maximum: CGFloat = 520
     /// Height the open field takes in the stack, so the list is pushed down.
     private static let searchBarHeight: CGFloat = 36
-    /// Drag payload for a session row: `tabsh-session:<id>`, so a drop on a
-    /// status heading (or another row under it) can move the card.
-    private static let dragPrefix = "tabsh-session:"
-
     private var folded: Set<TabshStatus> {
         Set(foldedStorage
             .split(separator: ",")
@@ -947,7 +969,7 @@ struct TabshStatusPanel: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(dropTarget == status ? greys.hover.opacity(0.85) : .clear)
         )
-        .onDrop(of: [.text], isTargeted: Binding(
+        .onDrop(of: [TabshSessionDrag.type], isTargeted: Binding(
             get: { dropTarget == status },
             set: { dropTarget = $0 ? status : (dropTarget == status ? nil : dropTarget) }
         )) { providers in
@@ -1003,12 +1025,13 @@ struct TabshStatusPanel: View {
     /// A session drag onto a status group: move the card, and open a folded
     /// group so the row is visible where it landed.
     private func acceptSessionDrop(_ providers: [NSItemProvider], onto status: TabshStatus) -> Bool {
-        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: String.self) })
-        else { return false }
-        _ = provider.loadObject(ofClass: String.self) { value, _ in
-            guard let value, value.hasPrefix(Self.dragPrefix) else { return }
-            let id = String(value.dropFirst(Self.dragPrefix.count))
-            guard !id.isEmpty else { return }
+        let type = TabshSessionDrag.type.identifier
+        guard let provider = providers.first(where: {
+            $0.hasItemConformingToTypeIdentifier(type)
+        }) else { return false }
+        _ = provider.loadDataRepresentation(forTypeIdentifier: type) { data, _ in
+            guard let data, let value = String(data: data, encoding: .utf8),
+                  let id = TabshSessionDrag.id(from: value) else { return }
             DispatchQueue.main.async {
                 sessions.move(id, to: status)
                 if folded.contains(status) {
@@ -1126,7 +1149,7 @@ struct TabshStatusPanel: View {
             }
         }
         .onDrag {
-            NSItemProvider(object: "\(Self.dragPrefix)\(session.id)" as NSString)
+            TabshSessionDrag.provider(for: session.id)
         }
         .onHover { over in
             if over { hovered = session.id }

@@ -172,7 +172,7 @@ enum AIAssist {
         case .gemini:
             text += "\n\nOn Gemini's free tier, outside the EEA, Switzerland and the UK, Google may use this to improve its products, and people may read it. Don't use it on sensitive pages."
         case .openRouter:
-            text += "\n\nSearch asks OpenRouter to use only providers that keep nothing (zero data retention)."
+            text += "\n\nTabs asks OpenRouter to use only providers that keep nothing (zero data retention)."
         default:
             break
         }

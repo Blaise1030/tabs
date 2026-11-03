@@ -391,8 +391,7 @@ struct WelcomePanel: View {
         let size: CGFloat
         var body: some View {
             Logomark()
-                .fill(Palette.ink, style: FillStyle(eoFill: true))
-                .aspectRatio(Logomark.canvas.width / Logomark.canvas.height, contentMode: .fit)
+                .foregroundStyle(Palette.ink)
                 .frame(width: size, height: size)
         }
     }
@@ -537,6 +536,9 @@ private struct WelcomeAgentSetup: View {
     @Binding var copied: Bool
     let onEditProviders: () -> Void
     let onSetUp: () -> Void
+    /// The setup prompt is long; collapsed it shows a few lines so the
+    /// providers and the Set up button stay on screen.
+    @State private var promptExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -553,14 +555,24 @@ private struct WelcomeAgentSetup: View {
                     .foregroundStyle(Palette.faint)
                     .textCase(.uppercase)
                     .tracking(0.6)
-                HStack(alignment: .top, spacing: 10) {
-                    Text(TabshDaemon.setupPrompt)
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .foregroundStyle(Palette.ink)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Pill(copied ? "Copied" : "Copy") { copyPrompt() }
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 10) {
+                        Text(TabshDaemon.setupPrompt)
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .foregroundStyle(Palette.ink)
+                            .textSelection(.enabled)
+                            .lineLimit(promptExpanded ? nil : 4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Pill(copied ? "Copied" : "Copy") { copyPrompt() }
+                    }
+                    Button {
+                        withAnimation(Motion.quick) { promptExpanded.toggle() }
+                    } label: {
+                        Text(promptExpanded ? "Show less" : "Show more")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(Palette.muted)
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(12)
                 .background(Palette.wash, in: RoundedRectangle(cornerRadius: 10, style: .continuous))

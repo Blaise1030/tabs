@@ -228,7 +228,7 @@ enum WhatsNew {
                 "An extension's popup window opens as a small window, as in Chrome: a password manager's vault, a sign-in.",
                 "Esc closes a new tab you haven't used, and words typed into a new tab wait for you.",
                 "Tampermonkey installs scripts from a link, and SingleFile saves pages again.",
-                "Close Group in a tab group's menu, and one ⇧⌘T brings the whole group back.",
+                "Close Group in a tab group's menu, and one ⌥⌘T brings the whole group back.",
                 "Don't Float Videos Here, in a site's card.",
                 "Bringing Arc over keeps its shape: pinned pages as pinned rows, its folders as named tab groups.",
                 "Too many pinned extensions no longer push the column off screen.",

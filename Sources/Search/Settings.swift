@@ -18,7 +18,6 @@ struct SettingsPanel: View {
     var found: String? = nil
     @Environment(\.asTab) private var asTab
 
-    @ObservedObject private var updater = Updater.shared
     @ObservedObject private var terminalSettings = TerminalPreferences.shared
     @ObservedObject private var typingSounds = TypingSounds.shared
     @ObservedObject private var shield = Shield.shared
@@ -431,10 +430,7 @@ struct SettingsPanel: View {
     // MARK: - words that change
 
     private func title(of item: SettingsItem) -> String {
-        switch item.id {
-        case "updates.version": return versionTitle
-        default: return item.title
-        }
+        item.title
     }
 
     private func detail(of item: SettingsItem) -> String {
@@ -454,7 +450,6 @@ struct SettingsPanel: View {
                 ? "macOS was told no: System Settings › Privacy & Security › Passkeys"
                 : item.detail
         case "shield": return shield.trouble ?? item.detail
-        case "updates.version": return versionDetail
         case "arc.import": return arcHere ? item.detail : "Arc isn't on this Mac. Bring Things Over can read an export"
         default: return item.detail
         }
@@ -787,9 +782,7 @@ struct SettingsPanel: View {
         case "autoscroll": Switch(on: $prefs.autoScroll)
         case "swipe.history": Switch(on: $prefs.holdsHistory)
         case "note.switcher": Always()
-        case "updates.version": versionControl
-        case "updates.auto": Switch(on: $prefs.installsUpdates)
-        case "about.feedback": Pill("Send Feedback") { Links.writeFeedback() }
+        case "about.feedback": Pill("Create Issue") { Links.writeFeedback() }
         case "about.notes": Pill("What's New…") { browser.lead(to: InternalPage(.notes)) }
         case "bench": Switch(on: $prefs.bench)
         default: unhandled(id)
@@ -1005,8 +998,7 @@ struct SettingsPanel: View {
     private var aboutHeader: some View {
         HStack(spacing: 14) {
             Logomark()
-                .fill(Palette.ink, style: FillStyle(eoFill: true))
-                .aspectRatio(Logomark.canvas.width / Logomark.canvas.height, contentMode: .fit)
+                .foregroundStyle(Palette.ink)
                 .frame(height: 34)
             VStack(alignment: .leading, spacing: 3) {
                 Text("Tabs")
@@ -1024,55 +1016,6 @@ struct SettingsPanel: View {
                 .foregroundStyle(Palette.muted)
                 .tint(Palette.muted)
             }
-        }
-    }
-
-    /// The version line follows the newer build from found to fetched to
-    /// in place; with none, it is simply this one.
-    private var versionTitle: String {
-        switch updater.stage {
-        case .none: return "Updates"
-        case .fetching(let next): return "Tabs \(next.version) is downloading…"
-        case .ready(let next): return "Tabs \(next.version) is ready"
-        case .offered(let next), .waiting(let next): return "Tabs \(next.version) is out"
-        }
-    }
-
-    private var versionDetail: String {
-        switch updater.stage {
-        case .none:
-            return updater.lastChecked.map { "Checked \($0.formatted(.relative(presentation: .named))), every hour on its own" }
-                ?? "Checked every hour on its own"
-        case .fetching(let next):
-            return next.notes ?? "Quietly, in the background. Nothing you have set is touched"
-        case .ready(let next):
-            return next.notes ?? "It's there the next time you open Tabs"
-        case .offered(let next):
-            return next.notes ?? "Open the disk image, the same as the first time"
-        case .waiting(let next):
-            return next.notes ?? "Checked and put in place when you press Install"
-        }
-    }
-
-    @ViewBuilder
-    private var versionControl: some View {
-        switch updater.stage {
-        case .none:
-            Pill(updater.checking ? "Checking…" : "Check now") {
-                updater.check { found in
-                    if found == nil { browser.announce("This is the latest one") }
-                }
-            }
-            .disabled(updater.checking)
-        case .fetching:
-            Ring(size: 12)
-        case .ready:
-            Pill("Relaunch now", filled: true) { updater.relaunch() }
-        case .offered:
-            Pill(updater.fetchingDisk ? "Downloading…" : "Download", filled: true) { updater.openDisk() }
-                .disabled(updater.fetchingDisk)
-        case .waiting:
-            Pill("Install", filled: true) { updater.install() }
         }
     }
 

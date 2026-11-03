@@ -4,9 +4,12 @@
 # fetches.
 #
 #   ./build.sh                 debug-free release build, ad-hoc signed: runs here
-#   SEARCH_DEV=1 ./build.sh    the same as a dev build: yellow icon, named for
-#                              the branch (Tabs-split-view from
-#                              claude/split-view-4a6927)
+#   SEARCH_DEV=1 ./build.sh    a fully isolated dev build: yellow icon, named
+#                              for the branch (Tabs-split-view from
+#                              claude/split-view-4a6927), bundle id
+#                              cc.tabsh.browser.dev, data under
+#                              ~/Library/Application Support/tabsh-browser-dev,
+#                              daemon on port 7683 — never the installed app
 #   SEARCH_DEV=1 SEARCH_FEATURE=name ./build.sh
 #                              the same, named Tabs-name
 #   ./build.sh release dmg     + build/Tabs.dmg, build/Tabs.zip and
@@ -59,14 +62,17 @@ case "$ARCH" in
 esac
 APP="$OUT/Tabs.app"
 NAME="Tabs"
-# Asked for with SEARCH_DEV=1, a dev build, on a yellow plate and named for
-# the feature it's built from: "Tabs-split-view" in the menu bar, the Dock
-# and ⌘Tab, so it's never taken for the installed app beside it, or for the
-# dev build from another worktree. Only the name people see changes. The
-# bundle id stays, so it shares the real app's settings, and so does the
-# folder, build/Tabs.app, which fresh.sh and the tests open. Not by
-# default: a plain ./build.sh is also the Tabs people here use every day
-# and the release candidates. What goes in a DMG or a ZIP is never one.
+# Installed / release builds keep the shipping id. SEARCH_DEV builds get
+# `.dev` so macOS, WebKit and UserDefaults treat them as a different app.
+BUNDLE_ID="cc.tabsh.browser"
+# Asked for with SEARCH_DEV=1, a fully isolated dev build: yellow plate,
+# named for the feature, bundle id cc.tabsh.browser.dev, its own Application
+# Support folder and daemon port (see Store.development / TabshDaemon.port).
+# The installed Tabs beside it keeps cc.tabsh.browser, tabsh-browser/ and
+# 7682. The .app still lands at build/Tabs.app so fresh.sh and the tests
+# open the same path. Not by default: a plain ./build.sh is the Tabs people
+# here use every day and the release candidates. What goes in a DMG or a
+# ZIP is never a SEARCH_DEV build.
 case "${SEARCH_DEV:-}" in
   0|1) DEV="$SEARCH_DEV" ;;
   "") DEV=0 ;;
@@ -90,6 +96,7 @@ if [ "$DEV" = 1 ]; then
     ""|HEAD) SHOWN="$NAME Dev" ;;   # no branch to name it for
     *) SHOWN="$NAME-$FEATURE" ;;
   esac
+  BUNDLE_ID="cc.tabsh.browser.dev"
 fi
 VERSION="$(tr -d '[:space:]' < VERSION)"
 # A build number that only ever goes up, so the updater can tell newer from
@@ -272,13 +279,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>$NAME</string>
   <key>CFBundleDisplayName</key><string>$NAME</string>
   <key>CFBundleExecutable</key><string>$NAME</string>
-  <key>CFBundleIdentifier</key><string>cc.tabsh.browser</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$BUILD</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   $ICONNAME
   <key>LSMinimumSystemVersion</key><string>$MINIMUM</string>
+  $([ "$DEV" = 1 ] && printf '  <key>TabsDev</key><true/>\n')
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSHumanReadableCopyright</key><string>© Office Commun · Tabs</string>
   <key>NSHighResolutionCapable</key><true/>
@@ -417,7 +425,12 @@ else
   [ "$STEP" != "app" ] && echo "no Developer ID certificate found — the DMG will only open on this Mac" >&2
 fi
 
-echo "built: $APP as $SHOWN ($VERSION, $ARCH, build $BUILD)"
+if [ "$DEV" = 1 ]; then
+  echo "built: $APP as $SHOWN ($VERSION, $ARCH, build $BUILD)"
+  echo "       isolated: $BUNDLE_ID · ~/Library/Application Support/tabsh-browser-dev · port 7683"
+else
+  echo "built: $APP as $SHOWN ($VERSION, $ARCH, build $BUILD)"
+fi
 [ "$STEP" = "app" ] && exit 0
 
 # The disk image: the app beside a shortcut to Applications, on a white

@@ -126,7 +126,8 @@ struct KeyCombo: Codable, Hashable {
     /// to move among Tabs' commands, not to give to an extension.
     static func isBrowserOnly(_ combo: KeyCombo) -> Bool {
         [KeyCombo("w"), KeyCombo("w", shift: true), KeyCombo("w", option: true),
-         KeyCombo("t"), KeyCombo("t", shift: true), KeyCombo("n"), KeyCombo("n", shift: true)].contains(combo)
+         KeyCombo("t"), KeyCombo("t", shift: true), KeyCombo("t", option: true),
+         KeyCombo("n"), KeyCombo("n", shift: true)].contains(combo)
     }
 }
 
@@ -166,10 +167,10 @@ struct Command: Identifiable {
 
         Command("file.newWindow", "New Window", .file, KeyCombo("n")) { _ in Browsers.newWindow() },
         Command("file.newTab", "New Tab", .file, KeyCombo("t")) { $0.launch() },
-        Command("file.newTerminal", "New Terminal Tab", .file, KeyCombo("t", option: true)) { $0.newTerminal() },
+        Command("file.newTerminal", "New Terminal Tab", .file, KeyCombo("t", shift: true)) { $0.newTerminal() },
         Command("file.newAgent", "New Agent…", .file, KeyCombo("a", shift: true)) { $0.show(InternalPage(.agentComposer)) },
         Command("file.newPrivateTab", "New Private Tab", .file, KeyCombo("n", shift: true)) { $0.newShyTab() },
-        Command("file.reopen", "Reopen Closed Tab", .file, KeyCombo("t", shift: true)) { $0.reopen() },
+        Command("file.reopen", "Reopen Closed Tab", .file, KeyCombo("t", option: true)) { $0.reopen() },
         Command("file.openAddress", "Open Address…", .file, KeyCombo("l")) { $0.edit() },
         Command("file.closeTab", "Close Tab", .file, KeyCombo("w")) { $0.closeFront() },
         Command("file.closeWindow", "Close Window", .file, KeyCombo("w", shift: true)) { $0.closeWindow() },
@@ -184,7 +185,8 @@ struct Command: Identifiable {
         Command("edit.findPrevious", "Find Previous", .edit, KeyCombo("g", shift: true)) { $0.look(forward: false) },
         Command("edit.copyCleanLink", "Copy Clean Link", .edit, KeyCombo("c", shift: true, option: true)) { $0.copyCleanLink() },
         // Voice, for the prompts this browser is mostly used to write: the
-        // session terminal in front. The New Agent card has its own button.
+        // agent chat or session terminal in front. The New Agent card and
+        // the chat composer also have their own mic buttons.
         Command("edit.dictate", "Dictate", .edit, KeyCombo("d", option: true)) { browser in
             guard let session = browser.active?.tabshSessionID else { return }
             Dictation.shared.toggle(intoSession: session)

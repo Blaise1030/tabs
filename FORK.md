@@ -80,8 +80,8 @@ Changed so far:
 Still to do once the product name is settled (all are string/branding passes, not
 architecture):
 
-- ~~Product/display name~~ Done: the browser is **Tabs** (`NAME="Tabs"` in `build.sh`, `Tabs.app`, menu/About/welcome strings). Internal Swift module, bundle id (`cc.tabsh.browser`) and data folder (`tabsh-browser`) are unchanged, so existing settings and sessions carry over.
-- ~~App icon~~ Done: browser-window + two tabs mark in `Icon/icon.swift` and `Design.swift` `Logomark` (replaces Search's S-in-a-pill). DMG background says Tabs. Site links still to do.
+- ~~Product/display name~~ Done: the browser is **Tabs** (`NAME="Tabs"` in `build.sh`, `Tabs.app`, menu/About/welcome strings). Release builds keep bundle id `cc.tabsh.browser` and data folder `tabsh-browser` (daemon port 7682). `SEARCH_DEV=1` builds are fully isolated: `cc.tabsh.browser.dev`, `tabsh-browser-dev`, daemon port 7683.
+- ~~App icon~~ Done: globe-in-capsule mark from `Icon/mark.svg` (Dock via `Icon/icon.swift`, in-app via `Design.swift` `Logomark`). DMG background says Tabs. Site links still to do.
 - Default-browser name and the `http`/`https` handler registration.
 - Passkeys: `Search.passkeys.entitlements` is tied to Office Commun's team
   (`7BYKA895MC.com.officecommun.search`); passkeys need this app's own Apple Developer team
@@ -276,7 +276,7 @@ Each milestone should be additive files where possible. Avoid editing `Browser.s
 
 ## Open decisions
 
-1. ~~Product name and display name: **Tabs**.~~ ~~Icon~~ Done (browser-window + tabs mark).
+1. ~~Product name and display name: **Tabs**.~~ ~~Icon~~ Done (globe-in-capsule mark).
 2. Does the board exist anywhere in the browser, or is the switcher enough? Recommended: one
    optional "tabsh" tab for the full board, everything else session tabs.
 3. Are session tabs pinned by default, or grouped under a "tabsh" group?

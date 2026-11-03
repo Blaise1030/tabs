@@ -9,6 +9,14 @@ import WebKit
 // make twice.
 
 enum Store {
+    /// A `SEARCH_DEV=1` build: its own bundle id (`cc.tabsh.browser.dev`),
+    /// its own Application Support folder, and its own daemon port — never
+    /// the installed Tabs beside it. Set in Info.plist by `build.sh`.
+    static var development: Bool {
+        if Bundle.main.object(forInfoDictionaryKey: "TabsDev") as? Bool == true { return true }
+        return (Bundle.main.bundleIdentifier ?? "").hasSuffix(".dev")
+    }
+
     /// A run is a test run if it says so, or if it is being run straight out
     /// of the build folder rather than from an installed app. The second half
     /// is not belt and braces: a development build launched from a terminal
@@ -24,7 +32,8 @@ enum Store {
     /// <name> is a world of its own, "Tabs (<name>)", with settings and
     /// WebKit stores of its own: two sessions testing at once, or a
     /// measurement that needs a browser nobody has installed anything in,
-    /// never borrow each other's. Nil for the browser somebody is using.
+    /// never borrow each other's. Nil for the browser somebody is using —
+    /// and for a SEARCH_DEV build, which uses `tabsh-browser-dev` instead.
     static let world: String? = {
         guard testing else { return nil }
         let asked = (ProcessInfo.processInfo.environment["SEARCH_PROBE"] ?? "").lowercased()
@@ -124,10 +133,12 @@ enum Store {
         let support = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         // The fork keeps its own session, history and passwords: an installed
-        // Tabs must not share this app's data folder.
-        let name = "tabsh-browser"
+        // Tabs must not share this app's data folder. A SEARCH_DEV build goes
+        // further — `tabsh-browser-dev` — so local yellow-icon runs never
+        // touch the downloaded app's cards, cookies or daemon.
+        let name = development ? "tabsh-browser-dev" : "tabsh-browser"
         let home = support.appendingPathComponent(world.map { "\(name) (\($0))" } ?? name, isDirectory: true)
-        if !testing {
+        if !testing, !development {
             let old = support.appendingPathComponent("Office Browser", isDirectory: true)
             let files = FileManager.default
             if !files.fileExists(atPath: home.path), files.fileExists(atPath: old.path) {

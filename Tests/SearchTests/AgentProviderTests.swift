@@ -52,4 +52,19 @@ final class AgentProviderTests: XCTestCase {
         XCTAssertEqual(grok?.resume, "grok --resume {session}")
         XCTAssertEqual(grok?.acp, "grok agent stdio")
     }
+
+    /// Welcome and Settings seed the same full stock list New Agent uses.
+    func testAgentProviderStockMatchesTabshStock() {
+        let names = AgentProviderStore.stockProviders().map(\.name)
+        XCTAssertEqual(names, Tabsh.stockProviders.map(\.name))
+        XCTAssertTrue(names.count >= 5, "stock providers: \(names)")
+    }
+
+    func testLegacySingleClaudeSeedIsDetected() {
+        XCTAssertTrue(AgentProviderStore.isLegacySingleStock([claude]))
+        XCTAssertFalse(AgentProviderStore.isLegacySingleStock([claude, codex]))
+        XCTAssertFalse(AgentProviderStore.isLegacySingleStock(
+            [AgentProvider(name: "Claude Code", command: "claude --dangerously-skip-permissions {prompt}")]
+        ))
+    }
 }

@@ -98,7 +98,7 @@ enum SettingsIndex {
         .init(id: "terminaltyping", page: .terminal, title: "Typing", icon: "keyboard"),
         .init(id: "terminalcolors", page: .terminal, title: "Colours", icon: "paintpalette"),
 
-        .init(id: "updates", page: .about, title: "Updates", icon: "arrow.triangle.2.circlepath"),
+        .init(id: "help", page: .about, title: "Help", icon: "questionmark.circle"),
         .init(id: "developer", page: .about, title: "Developer", icon: "hammer"),
     ]
 
@@ -198,7 +198,7 @@ enum SettingsIndex {
               more: "Pinned tabs, sound, calls and anything typed stay awake. Right-click a site's card to keep it awake.",
               keys: ["tabs.sleep", SleepPace.key], words: ["memory", "discard", "suspend", "ram"], kind: .wide),
         .init(id: "tabs.close.after", group: "memory", icon: "timer",
-              title: "Close tabs you leave alone", detail: "Pinned, named and grouped tabs stay. ⇧⌘T brings one back",
+              title: "Close tabs you leave alone", detail: "Pinned, named and grouped tabs stay. ⌥⌘T brings one back",
               more: "Counted from when you last left the tab, while Tabs is quit too. Private tabs, sound, calls and anything typed stay.",
               keys: ["tabs.close.after"], words: ["auto close", "archive", "clean up"]),
         .init(id: "tabs.shortcuts", group: "tabbar", icon: "command",
@@ -373,15 +373,12 @@ enum SettingsIndex {
               more: "Swipe back or forward and keep your fingers down: the pages that way appear, and moving up or down picks one.",
               keys: ["swipe.history"], words: ["gesture", "trackpad", "back"]),
 
-        // About
-        .init(id: "updates.version", group: "updates", icon: "arrow.down.app",
-              title: "Updates", detail: "Checked every hour on its own", words: ["version", "update"]),
-        .init(id: "updates.auto", group: "updates", icon: "arrow.triangle.2.circlepath",
-              title: "Install updates on its own", detail: "Off, Tabs tells you and waits for Install",
-              keys: [Updater.installKey], words: ["automatic updates"]),
-        .init(id: "about.feedback", group: "updates", icon: "envelope",
-              title: "Found something wrong?", detail: "Opens a draft with the version already in it", words: ["bug", "feedback", "report"]),
-        .init(id: "about.notes", group: "updates", icon: "sparkles",
+        // About — no updater here yet (see Updater.enabled); feedback opens
+        // a GitHub issue on this fork instead of a mail draft.
+        .init(id: "about.feedback", group: "help", icon: "ladybug",
+              title: "Found something wrong?", detail: "Opens a new GitHub issue with the version already in it",
+              words: ["bug", "feedback", "report", "issue", "github"]),
+        .init(id: "about.notes", group: "help", icon: "sparkles",
               title: "What's new", detail: "Every version's notes, newest first", words: ["release notes", "changelog"]),
         .init(id: "bench", group: "developer", icon: "terminal",
               title: "Let a script drive Tabs", detail: "A local socket for testing; its tabs never take over",

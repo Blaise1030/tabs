@@ -22,7 +22,20 @@ struct InternalPage: Equatable {
         case tabsh
         case preview
         case agent
-        case agentComposer
+        // Kebab host so restore (which lowercases the host) still matches —
+        // camelCase `agentComposer` used to round-trip as a blank web tab.
+        case agentComposer = "agent-composer"
+
+        /// Hosts that open this kind, including legacy spellings sessions
+        /// may still carry after a restart.
+        static func matching(host: String) -> Kind? {
+            if let kind = Kind.allCases.first(where: { $0.rawValue.lowercased() == host }) {
+                return kind
+            }
+            // Pre-fix sessions wrote `search://agentComposer`.
+            if host == "agentcomposer" { return .agentComposer }
+            return nil
+        }
     }
 
     var kind: Kind
@@ -37,9 +50,12 @@ struct InternalPage: Equatable {
     static let scheme = "search"
 
     /// search://settings, search://settings/privacy, search://import/Arc.
+    /// Host matching is case-insensitive, and `agentComposer` (the old
+    /// camelCase raw value) still opens New Agent after a restart.
     init?(url: URL) {
         guard url.scheme?.lowercased() == InternalPage.scheme,
-              let host = url.host()?.lowercased(), let kind = Kind(rawValue: host)
+              let host = url.host()?.lowercased(),
+              let kind = Kind.matching(host: host)
         else { return nil }
         let rest = url.path(percentEncoded: false).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         self.init(kind, rest)

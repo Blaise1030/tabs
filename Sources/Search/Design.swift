@@ -294,44 +294,38 @@ enum Motion {
     }
 }
 
-/// Tabs' mark — a browser window with two tabs on top. Drawn as vectors so it
-/// stays crisp at any size. No plate, no square behind it: the mark is a bare
-/// shape, the way every other icon in this app is. The one exception is the
-/// macOS app icon (`Icon/icon.swift`), which needs an opaque square — that's
-/// the Dock's requirement, not the logo's. Keep the geometry here matched
-/// with Icon/icon.swift.
-struct Logomark: Shape {
-    /// The mark's own canvas: pane + two tabs, nothing outside it.
-    static let canvas = CGSize(width: 640, height: 560)
+/// Tabs' mark — the globe-in-capsule SVG (`Icon/mark.svg`), drawn as a
+/// template so Welcome and About can tint it. Same path the Dock icon uses.
+struct Logomark: View {
+    /// viewBox of Icon/mark.svg.
+    static let canvas = CGSize(width: 34, height: 22)
 
-    /// Body, inactive tab, active tab — same numbers as Icon/icon.swift.
-    private static let parts: [(CGRect, CGFloat)] = [
-        (CGRect(x: 48, y: 168, width: 544, height: 344), 64),
-        (CGRect(x: 48, y: 88, width: 168, height: 112), 36),
-        (CGRect(x: 244, y: 56, width: 240, height: 144), 36),
-    ]
-
-    func path(in rect: CGRect) -> Path {
-        // Fit the canvas into whatever frame this is given, centred, at the
-        // larger scale that still keeps it inside — an SVG viewBox's "meet".
-        let scale = min(rect.width / Logomark.canvas.width, rect.height / Logomark.canvas.height)
-        let ox = rect.midX - Logomark.canvas.width * scale / 2
-        let oy = rect.midY - Logomark.canvas.height * scale / 2
-        func map(_ r: CGRect) -> CGRect {
-            CGRect(
-                x: ox + r.origin.x * scale,
-                y: oy + r.origin.y * scale,
-                width: r.width * scale,
-                height: r.height * scale
-            )
-        }
-        var path = Path()
-        for (part, corner) in Logomark.parts {
-            let mapped = map(part)
-            path.addRoundedRect(in: mapped, cornerSize: CGSize(width: corner * scale, height: corner * scale))
-        }
-        return path
+    var body: some View {
+        Image(nsImage: LogomarkSVG.image)
+            .resizable()
+            .renderingMode(.template)
+            .aspectRatio(Self.canvas.width / Self.canvas.height, contentMode: .fit)
     }
+}
+
+/// The mark's SVG path — identical to `Icon/mark.svg`. Black fill so
+/// `.template` recolouring works in Welcome and About.
+private enum LogomarkSVG {
+    private static let d = "M22.624.129H11.376C5.379.129.5 5.006.5 10.999c0 5.995 4.879 10.872 10.876 10.872h11.248C28.621 21.87 33.5 16.994 33.5 11S28.621.129 22.624.129m9.189 10.046h-4.09c-.271-3.565-2.29-6.649-5.2-8.397h.1c4.81 0 8.77 3.696 9.188 8.397zM17 20.102c-.811 0-1.82-1.34-2.468-3.711h4.934c-.647 2.37-1.657 3.71-2.468 3.71zm-2.822-5.341a22 22 0 0 1-.284-2.937h6.211a22 22 0 0 1-.283 2.937zm-.284-4.586c.036-1.069.134-2.052.284-2.937h5.644c.15.885.25 1.868.284 2.937zm.64-4.567c.646-2.37 1.656-3.71 2.466-3.71s1.82 1.34 2.468 3.71zm5.398-3.226a9.15 9.15 0 0 1 4.4 3.226h-3.179c-.3-1.23-.709-2.34-1.22-3.226m-7.085 3.226H9.669a9.15 9.15 0 0 1 4.399-3.226c-.512.887-.921 1.997-1.221 3.226M8.71 7.238h3.812c-.15.953-.244 1.945-.277 2.937H7.933a9 9 0 0 1 .777-2.937m3.535 4.586c.033.991.126 1.983.277 2.937H8.71a9 9 0 0 1-.777-2.937zm.603 4.567c.3 1.23.709 2.34 1.22 3.226A9.15 9.15 0 0 1 9.67 16.39zm8.307 0h3.178a9.15 9.15 0 0 1-4.398 3.226c.512-.887.92-1.997 1.22-3.226m4.139-1.63H21.48c.15-.953.244-1.946.277-2.937h4.312a9 9 0 0 1-.776 2.937m-3.536-4.586a24 24 0 0 0-.277-2.937h3.813c.414.91.683 1.898.776 2.937zM11.376 1.78h.1c-2.91 1.747-4.929 4.831-5.2 8.397H2.186c.419-4.7 4.38-8.397 9.189-8.397M2.187 11.825h4.09c.271 3.565 2.29 6.649 5.2 8.397h-.1c-4.81 0-8.77-3.697-9.189-8.397m20.437 8.397h-.1c2.91-1.747 4.929-4.831 5.2-8.397h4.09c-.419 4.7-4.38 8.397-9.189 8.397"
+
+    static let image: NSImage = {
+        let body = """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 34 22" fill="none">\
+        <path fill="#000000" d="\(d)"/>\
+        </svg>
+        """
+        guard let data = body.data(using: .utf8),
+              let image = NSImage(data: data) else {
+            return NSImage(size: NSSize(width: 34, height: 22))
+        }
+        image.isTemplate = true
+        return image
+    }()
 }
 
 /// Wrong address, said without a dialog: the field shivers and stops.

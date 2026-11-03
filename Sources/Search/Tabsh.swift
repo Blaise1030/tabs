@@ -188,8 +188,16 @@ enum Tabsh {
 
     // The chat routes a UI card answers on. Their chunks are rendered by
     // TabshAgent.swift; history and live turns are the same SSE stream.
+    //
+    // Start and the first message after a daemon restart spawn the ACP
+    // agent and wait through its handshake (up to ~30s on the daemon). The
+    // default 5s client timeout was shorter than a cold `cursor-agent acp`,
+    // so the UI said "The request timed out" and the session looked dead.
+    private static let chatLaunchTimeout: TimeInterval = 45
+
     static func startChat(_ session: String) async throws {
-        _ = try await request("POST", "/api/sessions/\(session)/chat/start")
+        _ = try await request("POST", "/api/sessions/\(session)/chat/start",
+                              timeout: chatLaunchTimeout)
     }
 
     /// A file picked in the composer, saved beside the daemon's database so
@@ -235,19 +243,19 @@ enum Tabsh {
 
     static func setChatModel(_ session: String, id: String) async throws -> ChatSelect {
         let data = try await request("POST", "/api/sessions/\(session)/chat/model",
-                                     body: ["id": id])
+                                     body: ["id": id], timeout: chatLaunchTimeout)
         return try JSONDecoder().decode(ChatSelect.self, from: data)
     }
 
     static func setChatMode(_ session: String, id: String) async throws -> ChatSelect {
         let data = try await request("POST", "/api/sessions/\(session)/chat/mode",
-                                     body: ["id": id])
+                                     body: ["id": id], timeout: chatLaunchTimeout)
         return try JSONDecoder().decode(ChatSelect.self, from: data)
     }
 
     static func sendChatMessage(_ session: String, text: String) async throws {
         _ = try await request("POST", "/api/sessions/\(session)/chat/message",
-                              body: ["text": text])
+                              body: ["text": text], timeout: chatLaunchTimeout)
     }
 
     static func stopChat(_ session: String) async throws {

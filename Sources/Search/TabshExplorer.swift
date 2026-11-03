@@ -53,10 +53,10 @@ struct TabshTerminalPane: View {
         _browser = ObservedObject(wrappedValue: browser)
         _terminal = ObservedObject(wrappedValue: TabshTerminals.shared.terminal(for: sessionID))
     }
-    /// An agent TUI keeps the files column shut until asked for, same as the
-    /// UI agent pane (and shares that choice). A plain shell still opens it.
+    /// Files column stays shut until asked for — agent TUI shares the UI
+    /// agent pane's choice; a plain shell starts closed each time too.
     @AppStorage("tabsh.agent.explorer") private var agentShowingExplorer = false
-    @State private var shellShowingExplorer = true
+    @State private var shellShowingExplorer = false
     @Environment(\.colorScheme) private var scheme
 
     private var dark: Bool { browser.chromeTheme?.dark ?? (scheme == .dark) }
@@ -108,14 +108,20 @@ struct TabshTerminalPane: View {
                          showingExplorer: showingExplorer) {
             VStack(spacing: 0) {
                 if hasAgent {
+                    // Same status select the chat header wears; activity stays
+                    // beside it when the agent is working.
                     TabshSessionHeader(
                         sessionID: sessionID,
                         title: session?.label ?? "Agent",
-                        showingExplorer: showingExplorer
+                        showingExplorer: showingExplorer,
+                        statusInMenu: false
                     ) {
-                        if let activity = terminal.activity {
-                            TabshAgentActivityPill(activity: activity,
-                                                   title: terminal.agentTitle)
+                        HStack(spacing: 8) {
+                            if let activity = terminal.activity {
+                                TabshAgentActivityPill(activity: activity,
+                                                       title: terminal.agentTitle)
+                            }
+                            TabshHeaderStatusSelect(sessionID: sessionID)
                         }
                     }
                     // Same ground as the shell and explorer, so the header
@@ -136,12 +142,12 @@ struct TabshTerminalPane: View {
         }
     }
 
-    /// A plain terminal has no header, so the explorer's button floats over
-    /// the shell when that column is shut. Agent shells put it in the header.
+    /// A plain terminal has no header, so the project toggle floats over
+    /// the shell. Agent shells put the same list mark in the header.
     @ViewBuilder
     private var floatingChrome: some View {
-        if !hasAgent, !shellShowingExplorer {
-            ExplorerShowButton(ground: ground) { shellShowingExplorer = true }
+        if !hasAgent {
+            ExplorerToggleButton(showing: $shellShowingExplorer, ground: ground)
         }
     }
 }
@@ -170,13 +176,15 @@ struct TabshProjectPane<Content: View>: View {
         HStack(spacing: 0) {
             content
             if showingExplorer {
-                explorerDivider
-                    .zIndex(1)
-                TabshExplorer(sessionID: sessionID, browser: browser,
-                              close: { showingExplorer = false })
+                // Edge is an overlay on the column's leading side (as the
+                // tab column's grip is), not a sibling above it — otherwise
+                // the pill paints through the search field. The chrome keeps
+                // a higher z-index so the field stays on top of the grip.
+                TabshExplorer(sessionID: sessionID, browser: browser, ground: ground)
                     .frame(width: explorerWidth)
                     .background(ground)
-                    .zIndex(0)
+                    .overlay(alignment: .leading) { explorerEdge }
+                    .zIndex(1)
             }
         }
         .background(ground)
@@ -197,47 +205,57 @@ struct TabshProjectPane<Content: View>: View {
         }
     }
 
-    /// The explorer's edge: a hairline to see, nine points to take hold of.
-    /// AppKit owns the drag: a SwiftUI gesture here lost the pointer to the
-    /// split stage the tab sits in (the pane divider answered instead).
-    private var explorerDivider: some View {
+    /// The explorer's edge: nine points to take hold of, starting under the
+    /// title and search so those stay above the grip. AppKit owns the drag:
+    /// a SwiftUI gesture here lost the pointer to the split stage.
+    private var explorerEdge: some View {
         ExplorerEdge(width: $explorerWidth)
             .frame(width: 9)
+            .padding(.top, TabshExplorer.chromeHeight)
+            .allowsHitTesting(true)
     }
 }
 
-/// The button that brings the explorer back once it is hidden: floats over
-/// the terminal's top corner, and sits at the end of the agent's header.
-struct ExplorerShowButton: View {
+/// Opens and closes the project column: a folder mark in the agent header,
+/// and the same control floating over a plain terminal that has no header.
+struct ExplorerToggleButton: View {
+    @Binding var showing: Bool
     /// Painted behind the floating form so the shell's text does not read
     /// through it. Nil leaves it bare, as in a header.
     var ground: Color? = nil
-    let show: () -> Void
 
     var body: some View {
-        Button(action: show) {
-            Image(systemName: "sidebar.right")
+        Button {
+            showing.toggle()
+        } label: {
+            Image(systemName: showing ? "folder.fill" : "folder")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Palette.muted)
+                .foregroundStyle(showing ? Palette.ink : Palette.muted)
                 .frame(width: 24, height: 24)
                 .background {
                     if let ground {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .fill(ground.opacity(0.85))
+                    } else if showing {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Palette.hover)
                     }
                 }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Show the project")
+        .help(showing ? "Hide the project" : "Show the project")
         .padding(ground == nil ? 0 : 8)
+        .accessibilityLabel(showing ? "Hide the project" : "Show the project")
     }
 }
 
 private struct TabshExplorer: View {
     let sessionID: String
     @ObservedObject var browser: Browser
-    let close: () -> Void
+    /// Same ground as the pane, so the chrome strip above the resize grip
+    /// matches the column (a terminal theme's background, or Palette.ground).
+    let ground: Color
 
     @ObservedObject private var sessions = TabshSessions.shared
     @State private var root = ""
@@ -253,6 +271,10 @@ private struct TabshExplorer: View {
     /// empty under each folder until opened).
     @State private var loadingFolders: Set<String> = []
     @FocusState private var searchFocused: Bool
+
+    /// Title row + search field + the padding above them: the resize grip
+    /// starts below this so the search paints over it, not under it.
+    static let chromeHeight: CGFloat = 62
 
     /// What this session's tree had open, kept per session so switching a
     /// tab or relaunching the browser comes back to the same folders.
@@ -288,47 +310,48 @@ private struct TabshExplorer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "folder")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Palette.faint)
-                Text(rootName)
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(root)
-                Spacer(minLength: 0)
-                Button(action: close) {
-                    Image(systemName: "sidebar.right")
+            // Above the resize grip (see TabshProjectPane.explorerEdge): an
+            // opaque strip so the edge pill cannot show through the field.
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Palette.muted)
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
+                        .foregroundStyle(Palette.faint)
+                    Text(rootName)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(Palette.ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(root)
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(.plain)
-                .help("Hide the project")
+                HStack(spacing: 5) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Palette.muted)
+                    TextField("Search…", text: $search)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 11.5))
+                        .focused($searchFocused)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Palette.hover)
+                )
             }
-            HStack(spacing: 5) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(Palette.muted)
-                TextField("Search…", text: $search)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11.5))
-                    .focused($searchFocused)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Palette.hover)
-            )
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
+            .padding(.bottom, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(ground)
+            .zIndex(1)
+
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.horizontal, 10)
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 10)
         .onReceive(NotificationCenter.default.publisher(for: TabshExplorerActions.focusSearch)) { note in
             guard (note.object as? String) == sessionID else { return }
             searchFocused = true

@@ -1450,11 +1450,24 @@ private struct NewTabMenu: View {
         let tab = NSMenuItem(title: "New Tab", action: #selector(NewTabActions.newTab), keyEquivalent: "t")
         tab.target = actions
         menu.addItem(tab)
-        let terminal = NSMenuItem(title: "New Terminal", action: #selector(NewTabActions.newTerminal), keyEquivalent: "T")
+        // Same keys as File › New Terminal Tab / New Agent… (⌘⇧T / ⇧⌘A).
+        let terminal = NSMenuItem(title: "New Terminal", action: #selector(NewTabActions.newTerminal), keyEquivalent: "t")
         terminal.target = actions
+        if let key = ShortcutStore.shared.key(for: "file.newTerminal") {
+            terminal.keyEquivalent = key.key
+            terminal.keyEquivalentModifierMask = key.flags
+        } else {
+            terminal.keyEquivalentModifierMask = [.command, .shift]
+        }
         menu.addItem(terminal)
-        let agentComposer = NSMenuItem(title: "New Agent…", action: #selector(NewTabActions.newAgentComposer), keyEquivalent: "A")
+        let agentComposer = NSMenuItem(title: "New Agent…", action: #selector(NewTabActions.newAgentComposer), keyEquivalent: "a")
         agentComposer.target = actions
+        if let key = ShortcutStore.shared.key(for: "file.newAgent") {
+            agentComposer.keyEquivalent = key.key
+            agentComposer.keyEquivalentModifierMask = key.flags
+        } else {
+            agentComposer.keyEquivalentModifierMask = [.command, .shift]
+        }
         menu.addItem(agentComposer)
         guard let window = NSApp.keyWindow ?? NSApp.mainWindow,
               let view = window.contentView else { return }
@@ -1544,7 +1557,7 @@ struct KeepLine: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Close the tabs under the line. Pins and groups stay; ⇧⌘T brings them all back.")
+                .help("Close the tabs under the line. Pins and groups stay; ⌥⌘T brings them all back.")
                 .transition(.opacity)
             }
         }

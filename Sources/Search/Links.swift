@@ -346,16 +346,19 @@ final class Links: NSObject, NSApplicationDelegate {
         _ = NSApp.delegate?.applicationOpenUntitledFile?(NSApp)
     }
 
-    /// ⌘⇧F, the Help menu, and the About page all come here: a draft, in
-    /// Mail, that already knows what build this is. The person still reads
-    /// it and presses send themselves — nothing here sends anything.
+    /// Help menu and Settings › About: a new GitHub issue on this fork,
+    /// with the build already in the body. Nothing is filed until they
+    /// submit it themselves.
     static func writeFeedback() {
         var text = URLComponents()
-        text.scheme = "mailto"
-        text.path = "hello@officecommun.com"
+        text.scheme = "https"
+        text.host = "github.com"
+        text.path = "/Blaise1030/tabsh-browser/issues/new"
         text.queryItems = [
-            URLQueryItem(name: "subject", value: "Tabs feedback — \(Updater.version) (\(Updater.build))"),
-            URLQueryItem(name: "body", value: "\n\n—\nSearch \(Updater.version), build \(Updater.build), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)"),
+            URLQueryItem(
+                name: "body",
+                value: "\n\n—\nTabs \(Updater.version), build \(Updater.build), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)"
+            ),
         ]
         guard let url = text.url else { return }
         NSWorkspace.shared.open(url)

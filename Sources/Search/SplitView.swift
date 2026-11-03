@@ -18,6 +18,8 @@ struct SplitStage: View {
     @State private var frames: [Tab.ID: CGRect] = [:]
     /// The page under the pointer, with two up.
     @State private var hovered: Tab.ID?
+    /// A session card (or link) held over the page, waiting to land.
+    @State private var landing = false
 
     var body: some View {
         let split = browser.activeSplit
@@ -68,8 +70,22 @@ struct SplitStage: View {
                 }
             }
         }
+        // A link: open as a tab. Session cards stay in the panel (private
+        // drag type). The stage has no tab row, so without this a drop on
+        // the page would fall through.
+        .onDrop(of: [.url, .text], isTargeted: $landing) { providers in
+            browser.take(providers)
+        }
+        .overlay {
+            if landing {
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
+                    .fill(Palette.ink.opacity(0.06))
+                    .allowsHitTesting(false)
+            }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .animation(Motion.quick, value: drag.preview)
+        .animation(Motion.quick, value: landing)
     }
 }
 

@@ -3876,7 +3876,9 @@ final class Browser: NSObject, ObservableObject {
         for tab in onScreen where tab.id != activeID { close(tab) }
     }
 
-    /// A link let go of over the tabs becomes a tab among them.
+    /// A link let go of over the tabs becomes a tab among them. Session
+    /// cards from the panel use a private drag type and are not accepted
+    /// here — click a row to open it.
     func take(_ providers: [NSItemProvider]) -> Bool {
         var took = false
         for provider in providers {
@@ -3893,7 +3895,8 @@ final class Browser: NSObject, ObservableObject {
             } else if provider.canLoadObject(ofClass: String.self) {
                 took = true
                 _ = provider.loadObject(ofClass: String.self) { text, _ in
-                    guard let text, let url = Address.url(from: text),
+                    guard let text else { return }
+                    guard let url = Address.url(from: text),
                           !["javascript", "chrome-extension", "webkit-extension"].contains(url.scheme?.lowercased() ?? "")
                     else { return }
                     DispatchQueue.main.async { self.open(url, foreground: true) }
@@ -3903,7 +3906,7 @@ final class Browser: NSObject, ObservableObject {
         return took
     }
 
-    /// ⌘⇧T. Back into the row at the place it left.
+    /// ⌥⌘T. Back into the row at the place it left.
     func reopen() {
         // A window closed after the last tab was: the window comes back, as
         // in Safari and Chrome (see Windows.swift).

@@ -144,7 +144,7 @@ enum TabshAgentActivity: Equatable {
 
 /// The header's live read of the agent's own title: a spinner while it
 /// works, the asking mark when it is blocked, a tick at rest. Read-only —
-/// moving the card stays with the header's menu and the chat's select.
+/// moving the card stays with the shared status select beside it.
 struct TabshAgentActivityPill: View {
     let activity: TabshAgentActivity
     /// The full title the state was read from, for the help text.

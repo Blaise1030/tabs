@@ -60,15 +60,34 @@ final class AgentProviderStore: ObservableObject {
     /// A read that started before an edit must not put the old list back.
     private var revision = 0
 
+    /// The agents a fresh install offers — same list as `Tabsh.stockProviders`
+    /// / New Agent, so Welcome isn't stuck on Claude Code alone.
+    static func stockProviders() -> [AgentProvider] {
+        Tabsh.stockProviders.map {
+            AgentProvider(name: $0.name, command: $0.command,
+                          resume: $0.resume ?? "", acp: $0.acp ?? "")
+        }
+    }
+
+    /// The first stock agent, for tests and call sites that want one entry.
     static func stock() -> AgentProvider {
-        AgentProvider(name: "Claude Code",
-                      command: "claude {prompt}",
-                      resume: "claude --resume {session}",
-                      acp: "npx --yes @agentclientprotocol/claude-agent-acp")
+        stockProviders().first!
+    }
+
+    /// True when the saved list is only the old single Claude seed, before
+    /// Welcome offered the full stock set.
+    static func isLegacySingleStock(_ list: [AgentProvider]) -> Bool {
+        guard list.count == 1 else { return false }
+        let only = list[0]
+        let claude = stock()
+        return only.name == claude.name
+            && only.command == claude.command
+            && only.resume == claude.resume
+            && only.acp == claude.acp
     }
 
     private init() {
-        providers = [Self.stock()]
+        providers = Self.stockProviders()
         preferred = providers.first?.name
     }
 
@@ -115,12 +134,15 @@ final class AgentProviderStore: ObservableObject {
                     acp: fixed.acp ?? ""
                 ))
             }
-            // A daemon with nothing saved gets the same stock agent the web
-            // app would have offered, ready to edit rather than an empty page.
-            if list.isEmpty { list = [Self.stock()] }
+            // A daemon with nothing saved — or only the old single Claude
+            // seed — gets the full stock list New Agent offers.
+            if list.isEmpty || Self.isLegacySingleStock(list) {
+                list = Self.stockProviders()
+                migrated = true
+            }
             providers = Array(list.prefix(Self.most))
-            // Persist the OpenCode minting fix once, so New Agent and a
-            // restart agree without waiting for the next Settings edit.
+            // Persist the OpenCode minting fix / expanded stock once, so New
+            // Agent and a restart agree without waiting for the next edit.
             if migrated {
                 revision += 1
                 save()

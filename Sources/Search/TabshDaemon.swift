@@ -17,9 +17,20 @@ import Foundation
 final class TabshDaemon {
     static let shared = TabshDaemon()
 
-    /// Where this browser's daemon listens. Distinct from tabsh's own default
-    /// (7681), which may already be serving the user's web app.
-    nonisolated static let port = 7682
+    /// Where this browser's daemon listens.
+    /// - 7681: standalone tabsh (`~/.tabsh`, web app / CLI / phone)
+    /// - 7682: installed Tabs (`tabsh-browser`)
+    /// - 7683: SEARCH_DEV Tabs (`tabsh-browser-dev`)
+    /// - 7684+: SEARCH_PROBE worlds, one port each so two probes never share
+    nonisolated static var port: Int {
+        if let world = Store.world {
+            if world == "test" { return 7684 }
+            var hash: UInt32 = 2_166_136_261
+            for byte in world.utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
+            return 7700 + Int(hash % 100)
+        }
+        return Store.development ? 7683 : 7682
+    }
 
     nonisolated static var base: URL {
         URL(string: "http://127.0.0.1:\(port)")!
@@ -27,11 +38,11 @@ final class TabshDaemon {
 
     /// Everything the browser's tabsh keeps: its database, the token beside
     /// it, and the `chats/` and `uploads/` folders the daemon derives from
-    /// that path. Separate from `~/.tabsh`, so the browser's cards, sessions
-    /// and tokens are its own.
+    /// that path. Lives under `Store.folder`, so a SEARCH_DEV build and a
+    /// SEARCH_PROBE world each get their own daemon — never `~/.tabsh`, and
+    /// never the installed app's cards.
     nonisolated static var stateFolder: URL {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return support.appendingPathComponent("tabsh-browser/tabsh", isDirectory: true)
+        Store.folder.appendingPathComponent("tabsh", isDirectory: true)
     }
 
     /// What `TABSH_DB` names when the daemon is started, and what `/api/about`
@@ -63,7 +74,7 @@ final class TabshDaemon {
     }
 
     /// Prompt Welcome / Settings hand to a coding agent so it wires hooks to
-    /// *this* Tabs daemon (port 7682), not a separate `~/.tabsh` install.
+    /// *this* Tabs daemon (its own port), not a separate `~/.tabsh` install.
     /// Asks which CLI to configure first — nothing is edited until the user
     /// answers. Quoted for a shell paste; `TABSH_URL` is set so `tabsh setup`
     /// embeds the right URL even when run outside a Tabs terminal.
@@ -187,9 +198,10 @@ final class TabshDaemon {
         }
     }
 
-    /// Sends SIGTERM to whatever is listening on this browser's port. Port
-    /// 7682 is only for Tabs' own daemon, so an orphan from a prior launch is
-    /// safe to take down here when we have no `Process` handle for it.
+    /// Sends SIGTERM to whatever is listening on this browser's port. That
+    /// port is only for this Tabs instance's daemon, so an orphan from a
+    /// prior launch is safe to take down here when we have no `Process`
+    /// handle for it.
     nonisolated private static func terminateListener(on port: Int) {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
