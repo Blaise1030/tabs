@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Static assets, plus one small Worker that redirects http to https. The
+  // tabsh.cc zone is already in the account; this Worker answers only the
+  // browser subdomain, so the two sites deploy independently.
+  "name": "tabs-browser",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "routes": [{ "pattern": "browser.tabsh.cc", "custom_domain": true }]
+}

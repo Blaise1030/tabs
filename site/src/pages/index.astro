@@ -1,0 +1,262 @@
+---
+import Page from '../layouts/Page.astro';
+import { DOWNLOAD_ARM64, DOWNLOAD_INTEL, REPO_URL, SIZE_MB, VERSION } from '../site';
+
+const description =
+  'Tabs is a small, native WebKit browser for the Mac with tabsh built in. A session is a tab: the terminal and the agent chat live in the browser’s own tab strip.';
+---
+
+<Page title="Tabs — a Mac browser with tabsh inside it" description={description}>
+  <section class="hero wrap">
+    <h1><strong>Tabs</strong> is a browser for the Mac with <strong>tabsh</strong> inside it.</h1>
+    <p class="lede">
+      A session is a tab. The terminal and the agent chat live in the tab strip you already
+      use — no second window, no board to open first. WebKit, free, for macOS 14 or later.
+    </p>
+
+    <div class="actions">
+      <a class="button" href={DOWNLOAD_ARM64}>Download for macOS</a>
+      <a class="text-link" href="#session">A session is a tab ↓</a>
+    </div>
+
+    <p class="meta">
+      Version {VERSION} · {SIZE_MB ? `${SIZE_MB} MB · ` : ''}Free ·{' '}
+      <a href={DOWNLOAD_INTEL}>Intel Mac?</a>
+    </p>
+  </section>
+
+  <figure class="wrap">
+    <div class="frame">
+      <div class="placeholder">
+        <span>fig. 1 — the app with a session tab. The real screenshot lands in M2.</span>
+      </div>
+    </div>
+    <figcaption>
+      <b>fig. 1</b> One browser, one tab strip: a tabsh session on one side of the split, the
+      page it is building on the other.
+    </figcaption>
+  </figure>
+
+  <section class="section wrap" id="session">
+    <h2>A session is a tab.</h2>
+    <div class="prose">
+      <p>
+        Open a session and it appears in the tab strip like any other page. The terminal or
+        the agent chat fills the tab; there is no board behind it, no second strip, and no
+        separate window to <strong>⌘-Tab</strong> back to.
+      </p>
+      <p>
+        Close the tab and the shell keeps running. Open the session again and you are back
+        in the same conversation, with its scrollback. Quitting the browser does not end it
+        either.
+      </p>
+    </div>
+
+    <ul class="points">
+      <li>
+        <h3>One tab per session</h3>
+        <p>Opening a session you already have selects its tab instead of making a second.</p>
+      </li>
+      <li>
+        <h3>The title is the card</h3>
+        <p>Names and status come from tabsh, so the tab strip is the list.</p>
+      </li>
+      <li>
+        <h3>Sessions outlive the app</h3>
+        <p>The daemon keeps the shells; Tabs keeps the tabs.</p>
+      </li>
+    </ul>
+  </section>
+
+  <section class="section wrap" id="split">
+    <h2>Split, when you need it.</h2>
+    <div class="prose">
+      <p>
+        The page and the session working on it, side by side. Drag the divider and the
+        width is yours; the pair comes back with its space, including after a restart. Any
+        two tabs can split — a session beside its page, the docs, or another session.
+      </p>
+    </div>
+
+    <ul class="points">
+      <li>
+        <h3>Any two tabs</h3>
+        <p>Side by side or stacked, with the focused pane outlined.</p>
+      </li>
+      <li>
+        <h3>Restored with the space</h3>
+        <p>Pairs and widths return the next time you open them.</p>
+      </li>
+      <li>
+        <h3>One split, not two</h3>
+        <p>Solo session tabs carry no tabsh chrome; the browser’s split is the only split.</p>
+      </li>
+    </ul>
+  </section>
+
+  <section class="section wrap" id="browser">
+    <h2>A quiet browser underneath.</h2>
+    <div class="prose">
+      <p>
+        The base is Search: a small native WebKit browser with nothing between you and the
+        page. Everything inherited works the same here, alongside the sessions.
+      </p>
+    </div>
+
+    <ul class="points">
+      <li>
+        <h3>Tabs, top or side</h3>
+        <p>Pins, spaces, and a sidebar that folds away with <strong>⌘S</strong>.</p>
+      </li>
+      <li>
+        <h3>Reading mode</h3>
+        <p>The article and its pictures, nothing else. <strong>⇧⌘R</strong>.</p>
+      </li>
+      <li>
+        <h3>Nothing tracked</h3>
+        <p>Ads and trackers stopped in the network layer, before the page draws.</p>
+      </li>
+      <li>
+        <h3>Your keychain</h3>
+        <p>Passwords and passkeys stay in macOS, never in an account of ours.</p>
+      </li>
+      <li>
+        <h3>Private tabs</h3>
+        <p>Their own cookies, no history, no place in tomorrow’s session.</p>
+      </li>
+      <li>
+        <h3>Chrome extensions</h3>
+        <p>On WebKit’s own extension engine, on macOS 15.4 or later.</p>
+      </li>
+    </ul>
+  </section>
+
+  <section class="section wrap" id="get">
+    <h2>One package. Nothing else to install.</h2>
+    <div class="prose">
+      <p>
+        Tabs carries the tabsh daemon inside the app. Agents are the CLIs already on your
+        Mac — <strong>claude</strong>, <strong>codex</strong>, <strong>opencode</strong> — as
+        with any terminal.
+      </p>
+    </div>
+
+    <ul class="points">
+      <li>
+        <h3>Download</h3>
+        <p>Take the build for your Mac: Apple silicon, or Intel.</p>
+      </li>
+      <li>
+        <h3>Drag it over</h3>
+        <p>Put Tabs in Applications. It is one app, with the daemon already inside.</p>
+      </li>
+      <li>
+        <h3>Open it</h3>
+        <p>First launch on another Mac may need right-click → Open. Then it starts normally.</p>
+      </li>
+    </ul>
+
+    <div class="actions">
+      <a class="button" href={DOWNLOAD_ARM64}>Download for macOS</a>
+      <a class="text-link" href={DOWNLOAD_INTEL}>Download for Intel</a>
+    </div>
+
+    <p class="meta">
+      Version {VERSION} · Free · These builds are ad-hoc signed, not notarised, so macOS
+      asks once. Nothing else is required.
+    </p>
+  </section>
+
+  <section class="section wrap" id="faq">
+    <h2>Questions, answered.</h2>
+
+    <div class="faq">
+      <details>
+        <summary>What is Tabs?</summary>
+        <p>
+          A Mac browser built on Search, with the tabsh daemon inside it. A tabsh session —
+          a terminal or an agent chat — opens as a browser tab, in the tab strip you already
+          use.
+        </p>
+      </details>
+
+      <details>
+        <summary>How is this different from opening tabsh.cc in Safari?</summary>
+        <p>
+          One tab strip. The session is a browser tab, so it sits beside the page it is
+          working on, with the same split, history and shortcuts. The daemon is bundled and
+          local, so there is no separate app to start and nothing to sign into.
+        </p>
+      </details>
+
+      <details>
+        <summary>Do I need tabsh installed separately?</summary>
+        <p>
+          No. The daemon ships in the app and keeps its own database under Application
+          Support. It does not touch a tabsh you already run, and a tabsh on another port is
+          left alone.
+        </p>
+      </details>
+
+      <details>
+        <summary>Is it Chromium?</summary>
+        <p>
+          No. Tabs runs on WebKit, the engine that ships with macOS. Pages render as they do
+          in Safari, and the app stays small because there is no second engine inside.
+        </p>
+      </details>
+
+      <details>
+        <summary>Which Macs?</summary>
+        <p>
+          macOS 14 or later, on Apple silicon or Intel. Intel Macs have a download of their
+          own, linked under the download button.
+        </p>
+      </details>
+
+      <details>
+        <summary>Do my agents work?</summary>
+        <p>
+          Yes, if their command is on your <strong>PATH</strong> — Claude Code, Codex, Cursor
+          CLI, OpenCode, or any CLI that takes a prompt. Tabs starts the same binaries a
+          terminal would.
+        </p>
+      </details>
+
+      <details>
+        <summary>Does it sync?</summary>
+        <p>
+          No. Tabs, history, passwords and sessions stay on the Mac they run on. There is no
+          account, no telemetry, and no server of ours.
+        </p>
+      </details>
+
+      <details>
+        <summary>Where do updates come from?</summary>
+        <p>
+          Not from an updater yet. Automatic updates are off in this fork until it has its
+          own signed feed, so for now a newer build is a download from Releases. Settings and
+          sessions are left alone when you replace the app.
+        </p>
+      </details>
+
+      <details>
+        <summary>Is it open source?</summary>
+        <p>
+          Yes. Tabs is a fork of <a href="https://github.com/driceroland/Search">Search</a> by
+          Office Commun, under the MIT license. The source and the fork notes are on
+          GitHub.
+        </p>
+      </details>
+
+      <details>
+        <summary>Something is wrong.</summary>
+        <p>
+          Open an issue at
+          {' '}<a href={`${REPO_URL}/issues`}>github.com/Blaise1030/tabs</a>. Include
+          the app version from Settings › About and what you were doing.
+        </p>
+      </details>
+    </div>
+  </section>
+</Page>
