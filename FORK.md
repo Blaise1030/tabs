@@ -81,7 +81,7 @@ Still to do once the product name is settled (all are string/branding passes, no
 architecture):
 
 - ~~Product/display name~~ Done: the browser is **Tabs** (`NAME="Tabs"` in `build.sh`, `Tabs.app`, menu/About/welcome strings). Internal Swift module, bundle id (`cc.tabsh.browser`) and data folder (`tabsh-browser`) are unchanged, so existing settings and sessions carry over.
-- App icon (`Icon/` and `build.sh`), DMG background, site links.
+- ~~App icon~~ Done: browser-window + two tabs mark in `Icon/icon.swift` and `Design.swift` `Logomark` (replaces Search's S-in-a-pill). DMG background says Tabs. Site links still to do.
 - Default-browser name and the `http`/`https` handler registration.
 - Passkeys: `Search.passkeys.entitlements` is tied to Office Commun's team
   (`7BYKA895MC.com.officecommun.search`); passkeys need this app's own Apple Developer team
@@ -223,6 +223,21 @@ updating it with the app through the same signed feed, the extra binary size, an
 "Open tabsh in another browser" as a fallback. The daemon embeds the web app, so no
 separate web assets are needed beyond the binary.
 
+### Dictation
+
+Voice for the two places a prompt is written here, both on this Mac and
+nowhere else: the New Agent card has a mic beside the attach button, and a
+session terminal takes `Edit › Dictate` (⌥⌘D) — what settles is typed into
+the shell for you to fix or send, never run.
+
+`Sources/Search/Dictation.swift` holds both engines: macOS 26's
+`DictationTranscriber`, and `SFSpeechRecognizer` with
+`requiresOnDeviceRecognition` on 14–25. A Mac whose language cannot recognise
+offline says so instead of sending audio to a server. A pill at the foot of
+the screen shows what is still being revised and never takes the keyboard;
+Return keeps what was said, Escape throws it away. `build.sh` carries the
+speech usage sentence for the older engine.
+
 ### Working on the tabsh side
 
 The solo view is a change to the tabsh repo (`~/Developer/tabsh`), which has its own rules:
@@ -261,7 +276,7 @@ Each milestone should be additive files where possible. Avoid editing `Browser.s
 
 ## Open decisions
 
-1. ~~Product name and display name: **Tabs**.~~ Icon still to do (the bundle id is a placeholder but a safe one).
+1. ~~Product name and display name: **Tabs**.~~ ~~Icon~~ Done (browser-window + tabs mark).
 2. Does the board exist anywhere in the browser, or is the switcher enough? Recommended: one
    optional "tabsh" tab for the full board, everything else session tabs.
 3. Are session tabs pinned by default, or grouped under a "tabsh" group?

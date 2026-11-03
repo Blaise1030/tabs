@@ -2160,7 +2160,7 @@ final class Browser: NSObject, ObservableObject {
             if prefs.bench {
                 Bench.shared.start(for: self)
             } else if prefs.benchRefused {
-                announce("“Let a script drive Search” was turned on outside Settings, and stays off")
+                announce("“Let a script drive Tabs” was turned on outside Settings, and stays off")
             }
             welcoming = !prefs.welcomed
             newsShowing = WhatsNew.due(prefs: prefs, welcoming: welcoming)
@@ -2464,7 +2464,7 @@ final class Browser: NSObject, ObservableObject {
             .sink { [weak self] on in
                 guard let self else { return }
                 if on { Bench.shared.start(for: self) } else { Bench.shared.stop() }
-                announce(on ? "Scripts can drive Search — see ./bench" : "The bench is closed")
+                announce(on ? "Scripts can drive Tabs — see ./bench" : "The bench is closed")
             }
             .store(in: &bag)
 

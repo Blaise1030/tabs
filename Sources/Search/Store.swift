@@ -20,8 +20,8 @@ enum Store {
     }
 
     /// Which test world a test run lives in. SEARCH_PROBE=1, or a run from
-    /// the build folder, is the test world, "Search (test)". SEARCH_PROBE=
-    /// <name> is a world of its own, "Search (<name>)", with settings and
+    /// the build folder, is the test world, "Tabs (test)". SEARCH_PROBE=
+    /// <name> is a world of its own, "Tabs (<name>)", with settings and
     /// WebKit stores of its own: two sessions testing at once, or a
     /// measurement that needs a browser nobody has installed anything in,
     /// never borrow each other's. Nil for the browser somebody is using.

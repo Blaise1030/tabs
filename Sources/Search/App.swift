@@ -141,6 +141,16 @@ struct TabsApp: App {
                         set: { browser.prefs.autocorrect = $0 }
                     ))
                 }
+                Divider()
+                // Speaks into the session terminal in front, on this Mac and
+                // no server; see Dictation.swift.
+                Button("Dictate") {
+                    if let session = browser.active?.tabshSessionID {
+                        Dictation.shared.toggle(intoSession: session)
+                    }
+                }
+                .shortcut("edit.dictate")
+                .disabled(browser.active?.tabshSessionID == nil)
             }
             CommandGroup(replacing: .toolbar) {
                 Toggle("Show Tabs in Sidebar", isOn: Binding(

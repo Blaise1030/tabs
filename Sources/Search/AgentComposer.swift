@@ -27,6 +27,7 @@ struct AgentComposer: View {
     @State private var failure: String?
     @State private var attachments: [TabshPendingAttachment] = []
     @State private var droppingFiles = false
+    @ObservedObject private var dictation = Dictation.shared
 
     private var home: String { FileManager.default.homeDirectoryForCurrentUser.path }
     private var recentFolders: [String] {
@@ -91,6 +92,25 @@ struct AgentComposer: View {
                     .disabled(creating)
                     .help("Attach images (or drop them on the card)")
                     .accessibilityLabel("Attach images")
+
+                    // The prompt, spoken: the same on-device dictation the
+                    // session terminals get, put where a New Agent is
+                    // written. What settles is appended; the pill shows the
+                    // rest while you speak.
+                    Button(action: dictate) {
+                        Image(systemName: dictation.busy ? "mic.fill" : "mic")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(dictation.busy ? Color(nsColor: .systemRed) : Palette.muted)
+                            .frame(width: 26, height: 26)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(Palette.hover)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(creating)
+                    .help(dictation.busy ? "Stop dictating" : "Dictate the prompt")
+                    .accessibilityLabel(dictation.busy ? "Stop dictating" : "Dictate the prompt")
 
                     statusChip
 
@@ -383,6 +403,21 @@ struct AgentComposer: View {
         ).height
         let line = ceil(font.ascender - font.descender + font.leading)
         return min(max(measured + 12, line * 2 + 12), 240)
+    }
+
+    /// Speaks the prompt, on device (see Dictation.swift). Each settled
+    /// piece is appended to what is already written, with a space between;
+    /// the field keeps the keyboard throughout.
+    private func dictate() {
+        if dictation.busy {
+            dictation.stop()
+            return
+        }
+        dictation.begin { words in
+            guard !words.isEmpty else { return }
+            let gap = prompt.isEmpty || prompt.hasSuffix(" ") || prompt.hasSuffix("\n") ? "" : " "
+            prompt += gap + words
+        }
     }
 
     private func chooseFiles() {

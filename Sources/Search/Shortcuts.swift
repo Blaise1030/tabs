@@ -183,6 +183,12 @@ struct Command: Identifiable {
         Command("edit.findNext", "Find Next", .edit, KeyCombo("g")) { $0.look(forward: true) },
         Command("edit.findPrevious", "Find Previous", .edit, KeyCombo("g", shift: true)) { $0.look(forward: false) },
         Command("edit.copyCleanLink", "Copy Clean Link", .edit, KeyCombo("c", shift: true, option: true)) { $0.copyCleanLink() },
+        // Voice, for the prompts this browser is mostly used to write: the
+        // session terminal in front. The New Agent card has its own button.
+        Command("edit.dictate", "Dictate", .edit, KeyCombo("d", option: true)) { browser in
+            guard let session = browser.active?.tabshSessionID else { return }
+            Dictation.shared.toggle(intoSession: session)
+        },
 
         Command("view.sidebar", "Show Tabs in Sidebar", .view, KeyCombo("s", shift: true)) { $0.toggleSidebar() },
         Command("view.fold", "Hide Sidebar or Tab Bar", .view, KeyCombo("s")) { $0.toggleFold() },

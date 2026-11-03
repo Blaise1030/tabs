@@ -98,7 +98,7 @@ final class Updater: ObservableObject {
         /// instead — the same as the first time.
         case offered(Release)
         /// Found, and waiting to be asked for: installing on its own is
-        /// switched off in Settings; Install Update is in the Search menu.
+        /// switched off in Settings; Install Update is in the Tabs menu.
         case waiting(Release)
     }
 
@@ -214,7 +214,7 @@ final class Updater: ObservableObject {
             case .waiting(let known) where known == found: break
             case .none, .offered, .waiting:
                 stage = .waiting(found)
-                say?("Tabs \(found.version) is out — choose Install Update in the Search menu")
+                say?("Tabs \(found.version) is out — choose Install Update in the Tabs menu")
             }
         }
     }
@@ -229,7 +229,7 @@ final class Updater: ObservableObject {
     func openDisk() {
         guard case .offered(let release) = stage, !fetchingDisk else { return }
         fetchingDisk = true
-        say?("Downloading Search \(release.version)…")
+        say?("Downloading Tabs \(release.version)…")
         Task.detached(priority: .utility) {
             let result: Result<URL, Error>
             do { result = .success(try await Swap.disk(release)) } catch { result = .failure(error) }
@@ -241,7 +241,7 @@ final class Updater: ObservableObject {
                     if Store.testing { Updater.diskVerdict = "verified" } else { NSWorkspace.shared.open(dmg) }
                 case .failure(let error):
                     Updater.diskVerdict = "refused: \(error)"
-                    say?("That download didn't check out — get Search from searchbrowser.app")
+                    say?("That download didn't check out — get Tabs from tabsh.cc")
                 }
             }
         }
@@ -282,7 +282,7 @@ final class Updater: ObservableObject {
         stage = worked ? .ready(release) : .offered(release)
         say?(worked
             ? "Tabs \(release.version) is ready — it's there the next time you open it"
-            : "Tabs \(release.version) is out — choose Download Update in the Search menu")
+            : "Tabs \(release.version) is out — choose Download Update in the Tabs menu")
     }
 
     /// Quit, and come back as the new one. A shell waits for this process
@@ -448,7 +448,7 @@ private enum Swap {
         try files.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? files.removeItem(at: scratch) }
 
-        let zip = scratch.appendingPathComponent("Search.zip")
+        let zip = scratch.appendingPathComponent("Tabs.zip")
         try await download(release.archive, to: zip)
         // A feed with no checksum is refused as a wrong one would be: build.sh
         // always writes it, so one missing is a feed that isn't ours.

@@ -168,7 +168,7 @@ final class SiteNotifications: NSObject {
     /// attachment's file into its own keeping.
     private static func iconFile(_ image: NSImage, host: String) -> URL? {
         guard let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return nil }
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Search notifications", isDirectory: true)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Tabs notifications", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let file = folder.appendingPathComponent("\(host)-\(UUID().uuidString).png")
         return (try? png.write(to: file)) == nil ? nil : file

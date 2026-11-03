@@ -276,7 +276,7 @@ enum WhatsNew {
             ],
             fixed: [
                 "⌘← and ⌘→ go back and forward again.",
-                "Links from Notion and other apps bring Search to the front.",
+                "Links from Notion and other apps bring Tabs to the front.",
                 "Addresses a dev server prints, like 0.0.0.0:3000, open.",
                 "The tabs you had at quit are the ones that come back.",
                 "The × closes a tab in the tab bar folded away with ⌘S.",
@@ -299,7 +299,7 @@ enum WhatsNew {
             fixed: [
                 "The holes found in this week's reviews: an extension could read files outside its own folder, and a page or an ad could open another app without asking.",
                 "Bitwarden signs in to a self-hosted server, and extension popups hear what changes while they're open.",
-                "A link from Mail brings Search to the front, and a full-screen video no longer goes black.",
+                "A link from Mail brings Tabs to the front, and a full-screen video no longer goes black.",
                 "Your extensions may each ask once more for their permissions at their next update.",
             ]
         ),
@@ -330,7 +330,7 @@ enum WhatsNew {
             ],
             better: [],
             fixed: [
-                "Search opens again on macOS 14.",
+                "Tabs opens again on macOS 14.",
                 "Signing in to Google no longer reloads the page over and over with iCloud Passwords installed.",
                 "⌘1–⌘9 on every keyboard layout, Tab between a form's fields, dragging tabs, a double-click along the top to fill the screen, and the Mac's beep while typing.",
             ]

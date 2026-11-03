@@ -393,7 +393,7 @@ struct WelcomePanel: View {
             Logomark()
                 .fill(Palette.ink, style: FillStyle(eoFill: true))
                 .aspectRatio(Logomark.canvas.width / Logomark.canvas.height, contentMode: .fit)
-                .frame(height: size * 0.56)
+                .frame(width: size, height: size)
         }
     }
 

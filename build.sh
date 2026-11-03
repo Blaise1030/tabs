@@ -336,7 +336,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSCameraUsageDescription</key>
   <string>Websites you visit can ask to use your camera. Tabs asks you the first time each site does and keeps your answer; Settings › Privacy forgets them.</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Websites you visit can ask to use your microphone. Tabs asks you the first time each site does and keeps your answer; Settings › Privacy forgets them.</string>
+  <string>Websites you visit can ask to use your microphone, and Dictate in a session terminal or the New Agent card listens for you. Tabs asks the first time each site does and keeps your answer; Settings › Privacy forgets them.</string>
+  <!-- Dictation on macOS before 26 goes through SFSpeechRecognizer, which
+       asks the Mac for this separately from the microphone. The newer
+       transcriber does not, but the sentence is harmless there. -->
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Dictate turns what you say into your prompt or your session terminal. The words are recognized on this Mac; nothing is sent anywhere.</string>
   <!-- Location: the first key is the one macOS has always read; the second
        is the one CoreLocation's requestWhenInUseAuthorization documents.
        Same sentence in both. -->
