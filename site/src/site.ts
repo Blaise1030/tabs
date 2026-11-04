@@ -8,7 +8,7 @@ export const TABSH_URL = 'https://tabsh.cc';
 
 export const VERSION = '1.1.1';
 /** Set when a DMG has actually been measured; leave null until then. */
-export const SIZE_MB: number | null = 11.9;
+export const SIZE_MB: number | null = 12.1;
 
 // Stable aliases added to every GitHub release by .github/workflows/build.yml,
 // so these links never change from one version to the next.
