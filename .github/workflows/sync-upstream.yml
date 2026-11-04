@@ -1,0 +1,160 @@
+# Merge driceroland/Search into this repo on a schedule, as a reviewable PR.
+#
+# Blaise1030/tabs is not a GitHub fork of Search, so the Sync fork button does
+# not apply. This workflow is the automated stand-in for the manual
+# `git fetch upstream && git merge upstream/main` in FORK.md.
+#
+# Never pushes to main. On a clean merge it opens (or updates) a PR. On
+# conflict it opens an issue with the conflicted files listed — resolve locally
+# and push; do not force-merge from here.
+#
+# Needs Settings → Actions → General → "Allow GitHub Actions to create and
+# approve pull requests" (GITHUB_TOKEN opens the PR).
+name: Sync upstream
+
+on:
+  schedule:
+    # Mondays 06:00 UTC — weekly is enough; Search security fixes ride normal
+    # main, not a separate channel.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Merge Search into chore/sync-upstream
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch Search and merge
+        id: merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM: https://github.com/driceroland/Search.git
+          BRANCH: chore/sync-upstream
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream "$UPSTREAM" 2>/dev/null || git remote set-url upstream "$UPSTREAM"
+          git fetch --no-tags upstream main
+          git fetch origin main
+
+          UPSTREAM_SHA=$(git rev-parse upstream/main)
+          BASE_SHA=$(git rev-parse origin/main)
+          echo "upstream=$UPSTREAM_SHA"
+          echo "origin/main=$BASE_SHA"
+
+          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+
+          if git merge-base --is-ancestor "$UPSTREAM_SHA" "$BASE_SHA"; then
+            echo "status=up-to-date" >> "$GITHUB_OUTPUT"
+            echo "Already contains upstream/main — nothing to sync."
+            exit 0
+          fi
+
+          git checkout -B "$BRANCH" origin/main
+
+          if git merge --no-edit upstream/main; then
+            echo "status=merged" >> "$GITHUB_OUTPUT"
+            echo "merge_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            # Automation-owned branch: rebuilt from origin/main each run.
+            git push -u origin "$BRANCH" --force
+          else
+            echo "status=conflict" >> "$GITHUB_OUTPUT"
+            {
+              echo 'files<<EOF'
+              git diff --name-only --diff-filter=U || true
+              echo 'EOF'
+            } >> "$GITHUB_OUTPUT"
+            git merge --abort
+            exit 0
+          fi
+
+      - name: Open or refresh pull request
+        if: steps.merge.outputs.status == 'merged'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: chore/sync-upstream
+        run: |
+          set -euo pipefail
+          UPSTREAM_SHA='${{ steps.merge.outputs.upstream_sha }}'
+          SHORT=$(printf '%s' "$UPSTREAM_SHA" | cut -c1-7)
+          TITLE="chore: sync upstream Search ($SHORT)"
+          BODY=$(cat <<EOF
+          ## Summary
+          Automated merge of [\`driceroland/Search\`](https://github.com/driceroland/Search) \`main\` (\`${SHORT}\`) into this repo.
+
+          ## Checklist
+          - [ ] Skim the diff for collisions in \`Browser.swift\`, \`TabBar.swift\`, \`build.sh\`, and tabsh-owned files
+          - [ ] \`swift test\` (and a quick ad-hoc launch) after merge
+          - [ ] Confirm updater stays off and bundle id / App Support paths are still Tabs
+
+          See [FORK.md](https://github.com/Blaise1030/tabs/blob/main/FORK.md) merge policy.
+          EOF
+          )
+          # Strip the shared indent the YAML block leaves on every body line.
+          BODY=$(printf '%s\n' "$BODY" | sed 's/^          //')
+
+          EXISTING=$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" --title "$TITLE" --body "$BODY"
+            echo "Updated PR #$EXISTING"
+          else
+            gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$BODY"
+          fi
+
+      - name: File conflict issue
+        if: steps.merge.outputs.status == 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFLICT_FILES: ${{ steps.merge.outputs.files }}
+        run: |
+          set -euo pipefail
+          TITLE="Upstream sync conflict — resolve Search merge by hand"
+          # One open issue at a time for this automation.
+          EXISTING=$(gh issue list --label upstream-sync --state open --json number --jq '.[0].number // empty')
+          BODY=$(cat <<EOF
+          The weekly Sync upstream workflow could not merge \`driceroland/Search\` \`main\` into \`main\` cleanly.
+
+          Conflicted paths:
+          \`\`\`
+          ${CONFLICT_FILES:-"(none listed)"}
+          \`\`\`
+
+          Resolve locally:
+
+          \`\`\`sh
+          git fetch upstream
+          git checkout -b chore/sync-upstream origin/main
+          git merge upstream/main
+          # fix conflicts, then:
+          git push -u origin HEAD
+          gh pr create --fill
+          \`\`\`
+
+          Close this issue when the sync PR is open or merged.
+          EOF
+          )
+          BODY=$(printf '%s\n' "$BODY" | sed 's/^          //')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Commented on issue #$EXISTING"
+          else
+            gh label create upstream-sync --color BFD4F2 --description "Automated Search sync needs a human" 2>/dev/null || true
+            gh issue create --title "$TITLE" --label upstream-sync --body "$BODY"
+          fi
