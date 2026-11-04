@@ -30,8 +30,9 @@ open build/Tabs.app
 ```
 
 `swift build` also works and runs the SwiftPM binary directly; `./build.sh` is what you want
-for a double-clickable app and a bundled tabsh daemon (pass `TABSH_BINARY=/path/to/tabsh` if
-you built the daemon yourself; CI does this automatically).
+for a double-clickable app and a bundled tabsh daemon. Daemon and `tabsctl` source live in
+[`daemon/`](daemon/) — build with `cargo build --release --locked --manifest-path daemon/Cargo.toml`
+(or pass `TABSH_BINARY` / `TABSCTL_BINARY`; CI builds the vendored tree automatically).
 
 Builds here are ad-hoc signed, not notarized. First launch on another Mac may need
 right-click → Open, or:
@@ -136,9 +137,9 @@ See **[Run it](#run-it)** above for the short path. In this fork the app is **Ta
 
 - `SEARCH_DEV=1 ./build.sh` — isolated dev build (yellow icon, branch name like
   `Tabs-split-view`, bundle id `cc.tabsh.browser.dev`, data under
-  `~/Library/Application Support/tabsh-browser-dev`, daemon on port 7683).
+  `~/Library/Application Support/tabs-browser-dev`, daemon on port 7683).
   `SEARCH_FEATURE=name` picks the name. A plain `./build.sh` is the release-style app
-  people use here every day (`cc.tabsh.browser`, `tabsh-browser/`, port 7682).
+  people use here every day (`cc.tabsh.browser`, `tabs-browser/`, port 7682).
 - `./build.sh release dmg` also makes `Tabs.dmg` / `Tabs.zip`. Upstream's
   `./build.sh release ship` notarizes and staples; that needs a Developer ID and Apple
   credentials, and is not set up for this fork yet (updater is off — see [FORK.md](FORK.md)).

@@ -262,6 +262,19 @@ enum Tabsh {
         _ = try await request("POST", "/api/sessions/\(session)/chat/stop")
     }
 
+    /// The finished transcript as one JSON array — used to paint a long chat
+    /// in one shot before the SSE stream attaches for live turns.
+    static func chatHistory(_ session: String) async throws -> [[String: Any]] {
+        let data = try await request("GET", "/api/sessions/\(session)/chat", timeout: 120)
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw TabshError.malformed
+        }
+        // Compact-map element-wise: a single odd value must not fail the
+        // whole cast of a 10k-message transcript (`as? [[String: Any]]` does).
+        let raw = root["messages"] as? [Any] ?? []
+        return raw.compactMap { $0 as? [String: Any] }
+    }
+
     static func approveChat(_ session: String, requestID: String, allow: Bool) async throws {
         _ = try await request("POST", "/api/sessions/\(session)/chat/approve",
                               body: ["requestId": requestID, "allow": allow])

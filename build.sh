@@ -8,7 +8,7 @@
 #                              for the branch (Tabs-split-view from
 #                              claude/split-view-4a6927), bundle id
 #                              cc.tabsh.browser.dev, data under
-#                              ~/Library/Application Support/tabsh-browser-dev,
+#                              ~/Library/Application Support/tabs-browser-dev,
 #                              daemon on port 7683 — never the installed app
 #   SEARCH_DEV=1 SEARCH_FEATURE=name ./build.sh
 #                              the same, named Tabs-name
@@ -68,7 +68,7 @@ BUNDLE_ID="cc.tabsh.browser"
 # Asked for with SEARCH_DEV=1, a fully isolated dev build: yellow plate,
 # named for the feature, bundle id cc.tabsh.browser.dev, its own Application
 # Support folder and daemon port (see Store.development / TabshDaemon.port).
-# The installed Tabs beside it keeps cc.tabsh.browser, tabsh-browser/ and
+# The installed Tabs beside it keeps cc.tabsh.browser, tabs-browser/ and
 # 7682. The .app still lands at build/Tabs.app so fresh.sh and the tests
 # open the same path. Not by default: a plain ./build.sh is the Tabs people
 # here use every day and the release candidates. What goes in a DMG or a
@@ -163,7 +163,7 @@ if [ -d "$DEST_BUNDLE" ] && [ ! -f "$DEST_BUNDLE/Contents/Info.plist" ]; then
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>tabsh-browser.Search.resources</string>
+	<string>tabs-browser.Search.resources</string>
 	<key>CFBundleName</key>
 	<string>Search_Search</string>
 	<key>CFBundlePackageType</key>
@@ -197,29 +197,43 @@ mv "$APP/Contents/MacOS/$NAME.sdk" "$APP/Contents/MacOS/$NAME"
 # and titles. The plist below points to it.
 cp Search.sdef "$APP/Contents/Resources/"
 
-# tabsh, the daemon the browser's session tabs talk to: one app installs and
-# starts everything. Built from the tabsh checkout next door (pnpm -C web
-# build, cargo build --release), or named with TABSH_BINARY; without it the
-# browser still runs, just without terminals and agents.
-TABSH_BINARY="${TABSH_BINARY:-$PWD/../tabsh/target/release/tabsh}"
+# tabsh + tabsctl: daemon and session CLI. Source lives in ./daemon (vendored
+# from Blaise1030/tabsh). Prefer prebuilt TABSH_BINARY / TABSCTL_BINARY; else
+# use ./daemon/target/release/{tabsh,tabsctl}, then a sibling ../tabsh checkout.
+TABSH_BINARY="${TABSH_BINARY:-}"
+if [ -z "$TABSH_BINARY" ]; then
+  if [ -f "$PWD/daemon/target/release/tabsh" ]; then
+    TABSH_BINARY="$PWD/daemon/target/release/tabsh"
+  elif [ -f "$PWD/../tabsh/target/release/tabsh" ]; then
+    TABSH_BINARY="$PWD/../tabsh/target/release/tabsh"
+  else
+    TABSH_BINARY="$PWD/daemon/target/release/tabsh"
+  fi
+fi
 if [ -f "$TABSH_BINARY" ]; then
   cp "$TABSH_BINARY" "$APP/Contents/Resources/tabsh"
   chmod +x "$APP/Contents/Resources/tabsh"
   echo "tabsh: $(du -h "$APP/Contents/Resources/tabsh" | cut -f1) daemon"
 else
-  echo "tabsh: no daemon at $TABSH_BINARY (set TABSH_BINARY); shipping without it"
+  echo "tabsh: no daemon at $TABSH_BINARY (cargo build --release --manifest-path daemon/Cargo.toml, or set TABSH_BINARY); shipping without it"
 fi
 
-# tabsctl, this browser's own session CLI (Sources/TabsCLI): a separate
-# binary from the tabsh daemon, built by the same `swift build` above and
-# shipped beside it so TabshDaemon can link it into session shells.
-TABSCTL_BINARY="$(swift build "${SWIFTFLAGS[@]}" --show-bin-path)/TabsCLI"
+TABSCTL_BINARY="${TABSCTL_BINARY:-}"
+if [ -z "$TABSCTL_BINARY" ]; then
+  if [ -n "$TABSH_BINARY" ] && [ -f "$(dirname "$TABSH_BINARY")/tabsctl" ]; then
+    TABSCTL_BINARY="$(dirname "$TABSH_BINARY")/tabsctl"
+  elif [ -f "$PWD/daemon/target/release/tabsctl" ]; then
+    TABSCTL_BINARY="$PWD/daemon/target/release/tabsctl"
+  else
+    TABSCTL_BINARY="$PWD/daemon/target/release/tabsctl"
+  fi
+fi
 if [ -f "$TABSCTL_BINARY" ]; then
   cp "$TABSCTL_BINARY" "$APP/Contents/Resources/tabsctl"
   chmod +x "$APP/Contents/Resources/tabsctl"
   echo "tabsctl: $(du -h "$APP/Contents/Resources/tabsctl" | cut -f1) session CLI"
 else
-  echo "tabsctl: no CLI at $TABSCTL_BINARY; shipping without it" >&2
+  echo "tabsctl: no CLI at $TABSCTL_BINARY (cargo build --release --manifest-path daemon/Cargo.toml); shipping without it" >&2
   exit 1
 fi
 
@@ -427,7 +441,7 @@ fi
 
 if [ "$DEV" = 1 ]; then
   echo "built: $APP as $SHOWN ($VERSION, $ARCH, build $BUILD)"
-  echo "       isolated: $BUNDLE_ID · ~/Library/Application Support/tabsh-browser-dev · port 7683"
+  echo "       isolated: $BUNDLE_ID · ~/Library/Application Support/tabs-browser-dev · port 7683"
 else
   echo "built: $APP as $SHOWN ($VERSION, $ARCH, build $BUILD)"
 fi

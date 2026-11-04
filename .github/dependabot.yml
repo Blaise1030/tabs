@@ -32,7 +32,7 @@ updates:
       include: scope
 
   - package-ecosystem: cargo
-    directory: /tabsh
+    directory: /daemon
     schedule:
       interval: weekly
       day: monday

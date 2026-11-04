@@ -43,7 +43,7 @@ final class TabshTerminalTests: XCTestCase {
     /// A plain shell's title (user, host, folder) says nothing about an
     /// agent, so the header stays bare.
     func testAPlainShellTitleSaysNothing() {
-        XCTAssertNil(TabshAgentActivity(title: "blaise@mac: ~/Developer/tabsh-browser"))
+        XCTAssertNil(TabshAgentActivity(title: "blaise@mac: ~/Developer/tabs-browser"))
         XCTAssertNil(TabshAgentActivity(title: "zsh"))
         XCTAssertNil(TabshAgentActivity(title: "  "))
     }

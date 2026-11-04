@@ -1,4 +1,4 @@
-# tabsh-browser
+# tabs-browser
 
 A macOS WebKit browser with [tabsh](https://tabsh.cc) built in.
 
@@ -21,7 +21,7 @@ git merge upstream/main
 - Fork created from upstream `main` (`b122202`, 2026-10-30), full history.
 - Bundle id is `cc.tabsh.browser` (`build.sh`), so a build here cannot share defaults,
   keychain items, WebKit containers or the updater with an installed Search.
-- Session/history/passwords live in `~/Library/Application Support/tabsh-browser`.
+- Session/history/passwords live in `~/Library/Application Support/tabs-browser`.
 - Upstream updates are **disabled** (`Updater.enabled` in `Sources/Search/Updater.swift`).
   Upstream's feed installs builds signed by Office Commun; enabling it would replace this app.
   Do not turn it back on until this fork has its own feed and signing identity.
@@ -50,8 +50,8 @@ SEARCH_DEV=1 ./build.sh     # a real .app in build/, named for the branch
 ### On GitHub Actions
 
 `.github/workflows/build.yml` builds the app where there is no Xcode-licensed Mac to hand: it
-builds the daemon from the vendored tree in [`tabsh/`](tabsh/) (from
-[Blaise1030/tabsh](https://github.com/Blaise1030/tabsh) — see [`tabsh/VENDOR.md`](tabsh/VENDOR.md)),
+builds the daemon from the vendored tree in [`daemon/`](daemon/) (from
+[Blaise1030/tabsh](https://github.com/Blaise1030/tabsh) — see [`daemon/VENDOR.md`](daemon/VENDOR.md)),
 and passes the binary to `build.sh` as `TABSH_BINARY`, so the download carries terminals and
 agents with it.
 
@@ -75,13 +75,13 @@ Changed so far:
 | Thing | Value |
 | --- | --- |
 | Bundle id (`build.sh`) | `cc.tabsh.browser` |
-| App Support folder (`Store.folder`) | `tabsh-browser` |
+| App Support folder (`Store.folder`) | `tabs-browser` |
 | Updater | off |
 
 Still to do once the product name is settled (all are string/branding passes, not
 architecture):
 
-- ~~Product/display name~~ Done: the browser is **Tabs** (`NAME="Tabs"` in `build.sh`, `Tabs.app`, menu/About/welcome strings). Release builds keep bundle id `cc.tabsh.browser` and data folder `tabsh-browser` (daemon port 7682). `SEARCH_DEV=1` builds are fully isolated: `cc.tabsh.browser.dev`, `tabsh-browser-dev`, daemon port 7683.
+- ~~Product/display name~~ Done: the browser is **Tabs** (`NAME="Tabs"` in `build.sh`, `Tabs.app`, menu/About/welcome strings). Release builds keep bundle id `cc.tabsh.browser` and data folder `tabs-browser` (daemon port 7682). `SEARCH_DEV=1` builds are fully isolated: `cc.tabsh.browser.dev`, `tabs-browser-dev`, daemon port 7683.
 - ~~App icon~~ Done: globe-in-capsule mark from `Icon/mark.svg` (Dock via `Icon/icon.swift`, in-app via `Design.swift` `Logomark`). DMG background says Tabs. Site links still to do.
 - Default-browser name and the `http`/`https` handler registration.
 - Passkeys: `Search.passkeys.entitlements` is tied to Office Commun's team
@@ -104,7 +104,7 @@ API on `http://127.0.0.1:7681`, authenticated with a bearer token kept at
 (`state.db`, `chats/`, `uploads/`).
 
 **The browser runs its own instance.** It starts the bundled `tabsh` with `TABSH_DB` under
-`~/Library/Application Support/tabsh-browser/tabsh/` (database, token, `chats/` and
+`~/Library/Application Support/tabs-browser/tabsh/` (database, token, `chats/` and
 `uploads/` all beside it) and `PORT=7682`, and only adopts a daemon whose `/api/about`
 reports that database. A tabsh serving the web app, the CLI or a phone on 7681 is left
 alone: the two never share a database, a token or a card list. The shells it starts inherit
@@ -202,16 +202,16 @@ agent chat. The tabsh **daemon** is the one external piece:
 - **Ship the daemon inside the bundle** (done): a signed `tabsh` binary in
   `Contents/Resources/`, started at launch if this browser's instance is not already up.
 - **Its own state** (done): `TABSH_DB` and `PORT` point it at
-  `~/Library/Application Support/tabsh-browser/tabsh/` and port 7682. It never adopts the
+  `~/Library/Application Support/tabs-browser/tabsh/` and port 7682. It never adopts the
   user's daemon on 7681 and never touches `~/.tabsh`; see `TabshDaemon.swift`. Starting
   fresh means the browser's cards and the web app's cards are separate lists.
 - **It outlives the app on purpose**: tabsh's promise is that shells stay up when the tab,
   the window and the app go away, so quitting the browser does not stop it. A later launch
   reuses it.
 - **`tabsctl`, a session CLI of the browser's own** (done): a separate signed binary in
-  `Contents/Resources/` (`Sources/TabsCLI/`, a SwiftPM executable next to `Search` — not
-  part of the tabsh repo), linked beside `tabsh` in the daemon's `bin` folder so an agent
-  in any session shell finds it on `PATH`. `tabsctl new --agent --prompt …` /
+  `Contents/Resources/` (Rust binary in `daemon/src/bin/tabsctl.rs`, built beside the
+  daemon), linked beside `tabsh` in the daemon's `bin` folder so an agent in any
+  session shell finds it on `PATH`. `tabsctl new --agent --prompt …` /
   `tabsctl new --terminal` speaks one JSON line to the browser's `agent.sock`
   (`TabshAgentSocket.swift`, uid-checked, sessions only — not the bench), the browser
   creates the session through the composer's own paths and opens its tab in the
@@ -274,7 +274,7 @@ Each milestone should be additive files where possible. Avoid editing `Browser.s
   `upstream-sync` issue on conflict. Review that PR; never auto-merge it. Enable
   Settings → Actions → General → “Allow GitHub Actions to create and approve pull requests”
   so the bot can open the PR.
-- **Dependencies:** `.github/dependabot.yml` watches SwiftPM (root), `site/` (npm), `tabsh/`
+- **Dependencies:** `.github/dependabot.yml` watches SwiftPM (root), `site/` (npm), `daemon/`
   (Cargo), and GitHub Actions. Turn on Dependabot alerts + security updates under
   Settings → Code security (off by default on a private repo).
 - Land small commits that a merge can reason about; no repo-wide reformatting.

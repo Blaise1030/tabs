@@ -3,10 +3,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 // The page behind New Agent: tabsh's New card, in the browser's own chrome.
-// A folder, an agent, a terminal or a chat, a column, and the prompt — the
-// same pieces the web app asks for, made here so an agent can be started
-// without leaving the browser. Images dropped or pasted attach as chips and
-// are uploaded with the prompt (see TabshDrop), matching the web New card.
+// Uses the same composer card as agent chat (TabshComposerField, discs,
+// Superellipse) with New Agent chips under the field. Files dropped or
+// pasted attach as chips and are uploaded with the prompt (see TabshDrop).
 struct AgentComposer: View {
     @ObservedObject var browser: Browser
     @ObservedObject private var directory = TabshModels.shared
@@ -27,6 +26,12 @@ struct AgentComposer: View {
     @State private var failure: String?
     @State private var attachments: [TabshPendingAttachment] = []
     @State private var droppingFiles = false
+    @State private var composerHeight: CGFloat = 32
+    @State private var focusToken = 0
+    /// `@` lists files under the chosen folder; + still opens the system panel.
+    @State private var filesOpen = false
+    /// `/` lists project and personal Cursor skills.
+    @State private var skillsOpen = false
     @ObservedObject private var dictation = Dictation.shared
 
     private var home: String { FileManager.default.homeDirectoryForCurrentUser.path }
@@ -57,129 +62,146 @@ struct AgentComposer: View {
             // window's frame grey: the card is one page among the others,
             // and the frame already sits around it as a card (see CardEdge).
             Palette.ground
-            VStack(alignment: .leading, spacing: 10) {
-                // What the card asks about itself, said before the prompt
-                // is written: where it runs, which agent and model run it,
-                // and whether it opens a terminal or a chat.
-                HStack(spacing: 8) {
-                    folderChip
-                    modelChip
-                    modeSwitch
-                    if hasAgentModes { agentModeChip }
-
-                    Spacer(minLength: 0)
+            VStack(spacing: 7) {
+                if let failure {
+                    Text(failure)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Palette.unsafe)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                // The screenshots sit under that header, over the prompt they
-                // belong to: what the agent is being shown, then what it is
-                // being asked.
-                if !attachments.isEmpty { attachmentBar }
+                // Same composer card as the agent chat. `@` / `/` float above
+                // the card so opening them does not shift the layout.
+                VStack(alignment: .leading, spacing: 6) {
+                    if !attachments.isEmpty { attachmentBar }
 
-                promptField
+                    HStack(alignment: .bottom, spacing: 4) {
+                        Button(action: chooseFiles) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Palette.muted)
+                                .composerDisc()
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(creating)
+                        .help("Attach images or files")
+                        .accessibilityLabel("Attach images or files")
 
-                HStack(spacing: 8) {
-                    Button(action: chooseFiles) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(Palette.muted)
-                            .frame(width: 26, height: 26)
-                            .background(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(Palette.hover)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(creating)
-                    .help("Attach images (or drop them on the card)")
-                    .accessibilityLabel("Attach images")
+                        Button(action: dictate) {
+                            Image(systemName: dictation.busy ? "mic.fill" : "mic")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(dictation.busy ? Color(nsColor: .systemRed) : Palette.muted)
+                                .composerDisc()
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(creating)
+                        .help(dictation.busy ? "Stop dictating" : "Dictate the prompt")
+                        .accessibilityLabel(dictation.busy ? "Stop dictating" : "Dictate the prompt")
 
-                    // The prompt, spoken: the same on-device dictation the
-                    // session terminals get, put where a New Agent is
-                    // written. What settles is appended; the pill shows the
-                    // rest while you speak.
-                    Button(action: dictate) {
-                        Image(systemName: dictation.busy ? "mic.fill" : "mic")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(dictation.busy ? Color(nsColor: .systemRed) : Palette.muted)
-                            .frame(width: 26, height: 26)
-                            .background(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(Palette.hover)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(creating)
-                    .help(dictation.busy ? "Stop dictating" : "Dictate the prompt")
-                    .accessibilityLabel(dictation.busy ? "Stop dictating" : "Dictate the prompt")
+                        TabshComposerField(text: $prompt,
+                                           height: $composerHeight,
+                                           focus: focusToken,
+                                           placeholder: "What should the agent do?",
+                                           onSubmit: create,
+                                           onFiles: attach,
+                                           onPickFiles: {
+                                               foldersOpen = false
+                                               modelsOpen = false
+                                               modeOpen = false
+                                               skillsOpen = false
+                                               filesOpen = true
+                                           },
+                                           onPickSkills: {
+                                               foldersOpen = false
+                                               modelsOpen = false
+                                               modeOpen = false
+                                               filesOpen = false
+                                               skillsOpen = true
+                                           })
+                            .frame(height: composerHeight)
 
-                    statusChip
-
-                    Spacer(minLength: 6)
-
-                    if let failure {
-                        Text(failure)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Palette.unsafe)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-
-                    // A send button, round: the one thing the composer is for.
-                    // The same circle the chat's own composer sends with —
-                    // accent when there is something to start, a quiet ring
-                    // when not.
-                    Button(action: create) {
                         if creating {
                             ProgressView()
                                 .controlSize(.small)
-                                .frame(width: 28, height: 28)
-                                .background(Circle().fill(Palette.ground))
+                                .composerDisc()
                         } else {
-                            Image(systemName: "arrow.up")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(ready ? .white : Palette.faint)
-                                .frame(width: 28, height: 28)
-                                .background(
-                                    Circle().fill(ready
-                                        ? Color(nsColor: .controlAccentColor)
-                                        : Palette.ground)
-                                )
+                            Button(action: create) {
+                                Image(systemName: "arrow.up")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(ready ? .white : Palette.faint)
+                                    .composerDisc(
+                                        fill: ready ? Color(nsColor: .controlAccentColor) : Palette.ground,
+                                        ring: !ready
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!ready)
+                            .help("Create (⌘↩)")
+                            .accessibilityLabel("Create")
                         }
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!ready)
-                    .help("Create (⌘↩)")
-                    .accessibilityLabel("Create")
+
+                    HStack(spacing: 6) {
+                        folderChip
+                        modelChip
+                        modeSwitch
+                        if hasAgentModes { agentModeChip }
+                        statusChip
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.leading, 1)
+                    .padding(.bottom, 2)
                 }
-            }
-            .padding(16)
-            .frame(width: 620)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Palette.ground)
-                    .shadow(color: .black.opacity(0.07), radius: 18, y: 4)
-            )
-            .overlay(
-                // The same hairline the new-tab field wears: a light edge
-                // that says where the card starts, not a heavy frame. A
-                // drop lights the accent so the card claims the files
-                // before the terminal behind it ever could.
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(
-                        droppingFiles
-                            ? Color(nsColor: .controlAccentColor).opacity(0.55)
-                            : Palette.hairline,
-                        lineWidth: 1
-                    )
-            )
-            .onDrop(of: [.fileURL, .image, .png, .jpeg, .gif, .webP, .tiff],
-                    isTargeted: $droppingFiles) { providers in
-                TabshDrop.urls(from: providers) { attach($0) }
-                return true
+                .padding(.horizontal, 5)
+                .padding(.vertical, 5)
+                .frame(width: 620)
+                .background(
+                    Superellipse()
+                        .fill(droppingFiles ? Palette.wash : Palette.ground)
+                        .shadow(color: .black.opacity(CardEdge.shadow), radius: 2, y: 1)
+                )
+                .overlay(Superellipse().stroke(
+                    droppingFiles ? Color(nsColor: .controlAccentColor).opacity(0.55) : Palette.hairline,
+                    lineWidth: 1
+                ))
+                .onDrop(of: [.fileURL, .image, .png, .jpeg, .gif, .webP, .tiff],
+                        isTargeted: $droppingFiles) { providers in
+                    TabshDrop.urls(from: providers) { attach($0) }
+                    return true
+                }
+                .overlay(alignment: .top) {
+                    Group {
+                        if skillsOpen {
+                            TabshComposerSkillPicker(projectPath: folder) { skill in
+                                applySkill(skill)
+                                skillsOpen = false
+                            } dismiss: {
+                                skillsOpen = false
+                            }
+                            .frame(maxWidth: .infinity)
+                            .composerMenuChrome()
+                        } else if filesOpen {
+                            TabshComposerFilePicker(rootPath: folder) { url in
+                                attach([url])
+                                filesOpen = false
+                            } dismiss: {
+                                filesOpen = false
+                            }
+                            .frame(maxWidth: .infinity)
+                            .composerMenuChrome()
+                        }
+                    }
+                    .floatAboveComposer()
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+                .zIndex((skillsOpen || filesOpen) ? 2 : 0)
+                .animation(Motion.settle, value: skillsOpen || filesOpen)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task { await load() }
+        .onAppear { focusToken += 1 }
     }
 
     private var attachmentBar: some View {
@@ -191,6 +213,8 @@ struct AgentComposer: View {
                     }
                 }
             }
+            .padding(.horizontal, 2)
+            .padding(.top, 2)
         }
         .scrollIndicators(.never)
         .frame(height: 58)
@@ -201,21 +225,8 @@ struct AgentComposer: View {
             Button("Backlog") { status = "backlog" }
             Button("In progress") { status = "in_progress" }
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: status == "backlog" ? "tray" : "circle.dotted")
-                    .font(.system(size: 10))
-                Text(status == "backlog" ? "Backlog" : "In progress")
-                    .font(.system(size: 11.5))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-            }
-            .foregroundStyle(Palette.muted)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Palette.hover)
-            )
+            chipLabel(icon: status == "backlog" ? "tray" : "circle.dotted",
+                      title: status == "backlog" ? "Backlog" : "In progress")
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -227,25 +238,13 @@ struct AgentComposer: View {
             foldersOpen.toggle()
             modelsOpen = false
             modeOpen = false
+            filesOpen = false
+            skillsOpen = false
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "folder")
-                    .font(.system(size: 10))
-                Text(TabshFolders.tildify(folder, home: home))
-                    .font(.system(size: 11.5))
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                    .frame(maxWidth: 120, alignment: .leading)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-            }
-            .foregroundStyle(Palette.muted)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Palette.hover)
-            )
+            chipLabel(icon: "folder",
+                      title: TabshFolders.tildify(folder, home: home),
+                      truncate: .head,
+                      maxWidth: 96)
         }
         .buttonStyle(.plain)
         .popover(isPresented: $foldersOpen, arrowEdge: .bottom) {
@@ -265,29 +264,32 @@ struct AgentComposer: View {
             modelsOpen.toggle()
             foldersOpen = false
             modeOpen = false
+            filesOpen = false
+            skillsOpen = false
             if modelsOpen {
                 let list = providers
                 Task { await directory.refresh(providers: list) }
             }
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "cpu")
-                    .font(.system(size: 10))
+            let brand = TabshAgentBrand.infer(
+                name: provider?.name ?? providerName,
+                command: provider?.command ?? "",
+                acp: provider?.acp ?? ""
+            )
+            HStack(spacing: 4) {
+                TabshAgentMark(brand: brand, size: 11, tint: Palette.muted)
                 Text(modelName ?? provider?.name ?? "Agent")
-                    .font(.system(size: 11.5))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(maxWidth: 120, alignment: .leading)
+                    .frame(maxWidth: 96, alignment: .leading)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: 7, weight: .semibold))
             }
+            .font(.system(size: 10.5, weight: .medium))
             .foregroundStyle(Palette.muted)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Palette.hover)
-            )
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(Palette.hover))
         }
         .buttonStyle(.plain)
         .popover(isPresented: $modelsOpen, arrowEdge: .bottom) {
@@ -318,22 +320,10 @@ struct AgentComposer: View {
             modeOpen.toggle()
             modelsOpen = false
             foldersOpen = false
+            filesOpen = false
+            skillsOpen = false
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "shield.lefthalf.filled")
-                    .font(.system(size: 10))
-                Text(name)
-                    .font(.system(size: 11.5))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-            }
-            .foregroundStyle(Palette.muted)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Palette.hover)
-            )
+            chipLabel(icon: "shield.lefthalf.filled", title: name)
         }
         .buttonStyle(.plain)
         .popover(isPresented: $modeOpen, arrowEdge: .bottom) {
@@ -347,62 +337,49 @@ struct AgentComposer: View {
     }
 
     private var modeSwitch: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 1) {
             modeButton("Terminal", value: "tui")
             modeButton("Chat", value: "ui")
         }
-        .padding(2)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Palette.hover)
-        )
+        .padding(1.5)
+        .background(Capsule().fill(Palette.hover))
         .fixedSize()
     }
 
     private func modeButton(_ title: String, value: String) -> some View {
         let selected = mode == value
         return Text(title)
-            .font(.system(size: 11.5, weight: selected ? .medium : .regular))
+            .font(.system(size: 10.5, weight: selected ? .medium : .regular))
             .foregroundStyle(selected ? Palette.ink : Palette.muted)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
             .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(selected ? Palette.ground : .clear)
+                Capsule().fill(selected ? Palette.ground : .clear)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .contentShape(Capsule())
             .onTapGesture { mode = value }
     }
 
-    private var promptField: some View {
-        // Own text view so a drop attaches a chip instead of inserting a
-        // raw path the way TextEditor would (see TabshAttachTextView). Its
-        // placeholder is drawn by the field, on the caret's own line.
-        NewAgentPromptField(text: $prompt, placeholder: "What should the agent do?",
-                            onFiles: attach, onSubmit: create)
-            .frame(height: promptHeight)
-    }
-
-    // The prompt sizes to what's written in it, as the web card's does: room
-    // for two lines when it's empty, then one more for each line typed, up to
-    // a point where the editor scrolls instead of the card growing taller
-    // than the window can show.
-    private var promptHeight: CGFloat {
-        let font = NSFont.systemFont(ofSize: 15.5)
-        // The card's width less its padding, then the editor's own margins
-        // (the 5pt a TextEditor keeps on each side).
-        let width: CGFloat = 620 - 32 - 10
-        var text = prompt.isEmpty ? " " : prompt
-        // A newline typed at the end opens a line that would otherwise go
-        // unmeasured until something lands on it.
-        if text.hasSuffix("\n") { text += " " }
-        let measured = (text as NSString).boundingRect(
-            with: NSSize(width: width, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: [.font: font]
-        ).height
-        let line = ceil(font.ascender - font.descender + font.leading)
-        return min(max(measured + 12, line * 2 + 12), 240)
+    /// Same short capsule the chat composer's Auto / Agent pickers use.
+    private func chipLabel(icon: String,
+                           title: String,
+                           truncate: Text.TruncationMode = .tail,
+                           maxWidth: CGFloat? = nil) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .medium))
+            Text(title)
+                .lineLimit(1)
+                .truncationMode(truncate)
+                .frame(maxWidth: maxWidth, alignment: .leading)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 7, weight: .semibold))
+        }
+        .font(.system(size: 10.5, weight: .medium))
+        .foregroundStyle(Palette.muted)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(Palette.hover))
     }
 
     /// Speaks the prompt, on device (see Dictation.swift). Each settled
@@ -425,20 +402,32 @@ struct AgentComposer: View {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = [.image]
         panel.prompt = "Attach"
-        panel.message = "Attach images to the new agent"
-        if panel.runModal() == .OK {
+        panel.message = "Attach images or files to the new agent"
+        let add: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK else { return }
             attach(panel.urls)
+        }
+        if let window = NSApp.keyWindow {
+            panel.beginSheetModal(for: window, completionHandler: add)
+        } else {
+            add(panel.runModal())
         }
     }
 
+    private func applySkill(_ skill: TabshSkill) {
+        let mention = "/\(skill.name)"
+        let gap = prompt.isEmpty || prompt.hasSuffix(" ") || prompt.hasSuffix("\n") ? "" : " "
+        prompt += gap + mention + " "
+        attach([skill.url])
+    }
+
     private func attach(_ urls: [URL]) {
-        let images = urls.filter(TabshDrop.isImage)
-        guard !images.isEmpty else { return }
-        for url in images where !attachments.contains(where: { $0.url == url }) {
+        guard !urls.isEmpty else { return }
+        for url in urls where !attachments.contains(where: { $0.url == url }) {
             attachments.append(TabshPendingAttachment(url: url))
         }
+        focusToken += 1
     }
 
     private func choose(_ item: Tabsh.Provider, _ model: Tabsh.ChatSelect.Choice?) {
@@ -547,109 +536,6 @@ struct AgentComposer: View {
     }
 }
 
-/// The New Agent prompt: same attach-aware text view the chat composer uses,
-/// sized for the card's larger type.
-private struct NewAgentPromptField: NSViewRepresentable {
-    @Binding var text: String
-    let placeholder: String
-    let onFiles: ([URL]) -> Void
-    let onSubmit: () -> Void
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSScrollView()
-        scroll.drawsBackground = false
-        scroll.borderType = .noBorder
-        scroll.hasVerticalScroller = true
-        scroll.hasHorizontalScroller = false
-        scroll.autohidesScrollers = true
-        scroll.scrollerStyle = .overlay
-
-        let text = TabshAttachTextView()
-        text.delegate = context.coordinator
-        text.onFiles = onFiles
-        text.onCommandReturn = { [weak coordinator = context.coordinator] in
-            coordinator?.parent.onSubmit()
-        }
-        text.isRichText = false
-        text.isEditable = true
-        text.isSelectable = true
-        text.allowsUndo = true
-        text.drawsBackground = false
-        text.focusRingType = .none
-        text.font = NSFont.systemFont(ofSize: 15.5)
-        text.textColor = .labelColor
-        text.insertionPointColor = .controlAccentColor
-        text.textContainerInset = NSSize(width: 5, height: 8)
-        text.placeholder = placeholder
-        text.placeholderColor = NSColor(Palette.ink).withAlphaComponent(0.3)
-        text.isVerticallyResizable = true
-        text.isHorizontallyResizable = false
-        text.minSize = .zero
-        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
-                              height: CGFloat.greatestFiniteMagnitude)
-        text.autoresizingMask = [.width]
-        text.textContainer?.widthTracksTextView = true
-        text.textContainer?.containerSize = NSSize(
-            width: scroll.contentSize.width,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-        text.isAutomaticQuoteSubstitutionEnabled = false
-        text.isAutomaticDashSubstitutionEnabled = false
-        text.isAutomaticTextReplacementEnabled = false
-        text.isAutomaticSpellingCorrectionEnabled = false
-        text.string = self.text
-        text.registerFileDrops()
-
-        scroll.documentView = text
-        context.coordinator.textView = text
-        return scroll
-    }
-
-    func updateNSView(_ scroll: NSScrollView, context: Context) {
-        guard let textView = scroll.documentView as? TabshAttachTextView else { return }
-        context.coordinator.parent = self
-        textView.onFiles = onFiles
-        textView.onCommandReturn = { [weak coordinator = context.coordinator] in
-            coordinator?.parent.onSubmit()
-        }
-        if textView.string != text {
-            textView.string = text
-            textView.needsDisplay = true
-        }
-        textView.placeholder = placeholder
-    }
-
-    final class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: NewAgentPromptField
-        weak var textView: NSTextView?
-
-        init(_ parent: NewAgentPromptField) { self.parent = parent }
-
-        func textDidChange(_ notification: Notification) {
-            guard let textView else { return }
-            parent.text = textView.string
-        }
-
-        // Return writes a line break, as it does in the window's other
-        // multi-line fields; Command-Return starts the agent, the keyboard
-        // twin of the card's send circle. ⌘↩ itself is read in the field's
-        // keyDown, since AppKit gives it no command to see here
-        // (TabshAttachTextView.onCommandReturn); this stays for anyone whose
-        // own key bindings send it as insertNewline.
-        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            guard commandSelector == #selector(NSResponder.insertNewline(_:)) else {
-                return false
-            }
-            let flags = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
-            guard flags.contains(.command) else { return false }
-            parent.onSubmit()
-            return true
-        }
-    }
-}
-
 /// The New Agent folder field as a search: typing lists the folders that
 /// complete it (the daemon's /api/files/folders), and until the field is
 /// edited the list offers recent folders. ↑↓ move, Enter picks, Tab picks
@@ -733,7 +619,9 @@ private struct FolderMenu: View {
             // A ScrollView has no height of its own, and in a popover it
             // collapsed to a sliver: the folders were listed but cut off
             // below the search field. It gets the room its rows take, and
-            // scrolls once that passes the cap.
+            // scrolls once that passes the cap. No scroller: the legacy bar
+            // in a popover is a thick strip beside the names.
+            .scrollIndicators(.never)
             .frame(height: listHeight)
             .onChange(of: active) {
                 guard active >= 0, active < options.count else { return }
@@ -893,6 +781,7 @@ private struct ModelMenu: View {
                     }
                     .padding(6)
                 }
+                .scrollIndicators(.never)
                 .frame(width: 190)
 
                 Rectangle()
@@ -953,9 +842,11 @@ private struct ModelMenu: View {
 
     private func providerRow(_ provider: Tabsh.Provider) -> some View {
         let active = shown?.name == provider.name
+        let brand = TabshAgentBrand.infer(name: provider.name,
+                                          command: provider.command,
+                                          acp: provider.acp ?? "")
         return HStack(spacing: 7) {
-            Image(systemName: "terminal")
-                .font(.system(size: 10))
+            TabshAgentMark(brand: brand, size: 12, tint: Palette.ink)
                 .frame(width: 14)
             Text(provider.name)
                 .font(.system(size: 12))
@@ -1032,6 +923,8 @@ private struct ModelMenu: View {
             }
             .padding(6)
         }
+        // Matches the chat model picker: no legacy thick scroller in the card.
+        .scrollIndicators(.never)
         .frame(width: 320)
     }
 

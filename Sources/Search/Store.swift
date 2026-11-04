@@ -33,7 +33,7 @@ enum Store {
     /// WebKit stores of its own: two sessions testing at once, or a
     /// measurement that needs a browser nobody has installed anything in,
     /// never borrow each other's. Nil for the browser somebody is using —
-    /// and for a SEARCH_DEV build, which uses `tabsh-browser-dev` instead.
+    /// and for a SEARCH_DEV build, which uses `tabs-browser-dev` instead.
     static let world: String? = {
         guard testing else { return nil }
         let asked = (ProcessInfo.processInfo.environment["SEARCH_PROBE"] ?? "").lowercased()
@@ -125,24 +125,37 @@ enum Store {
         return UUID(uuidString: text)!
     }
 
-    /// The app was called Office Browser until September 2026. Everything it
-    /// kept — the session, the pins, the history, what is hidden on each site
-    /// — moves to the new name the first time the new name runs, and the
-    /// settings are copied across. Nothing is left to be lost.
+    /// Earlier names (`Office Browser`, then `tabsh-browser`) move here the
+    /// first time `tabs-browser` runs, so session, pins, history and site
+    /// settings are not left behind.
     static let folder: URL = {
         let support = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         // The fork keeps its own session, history and passwords: an installed
         // Tabs must not share this app's data folder. A SEARCH_DEV build goes
-        // further — `tabsh-browser-dev` — so local yellow-icon runs never
+        // further — `tabs-browser-dev` — so local yellow-icon runs never
         // touch the downloaded app's cards, cookies or daemon.
-        let name = development ? "tabsh-browser-dev" : "tabsh-browser"
+        let name = development ? "tabs-browser-dev" : "tabs-browser"
         let home = support.appendingPathComponent(world.map { "\(name) (\($0))" } ?? name, isDirectory: true)
-        if !testing, !development {
-            let old = support.appendingPathComponent("Office Browser", isDirectory: true)
+        if !testing {
             let files = FileManager.default
-            if !files.fileExists(atPath: home.path), files.fileExists(atPath: old.path) {
-                try? files.moveItem(at: old, to: home)
+            if !files.fileExists(atPath: home.path) {
+                let predecessors: [String]
+                if let world {
+                    let oldBase = development ? "tabsh-browser-dev" : "tabsh-browser"
+                    predecessors = ["\(oldBase) (\(world))"]
+                } else if development {
+                    predecessors = ["tabsh-browser-dev"]
+                } else {
+                    predecessors = ["tabsh-browser", "Office Browser"]
+                }
+                for previous in predecessors {
+                    let old = support.appendingPathComponent(previous, isDirectory: true)
+                    if files.fileExists(atPath: old.path) {
+                        try? files.moveItem(at: old, to: home)
+                        break
+                    }
+                }
             }
         }
         return home

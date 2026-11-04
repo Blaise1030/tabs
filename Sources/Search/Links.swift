@@ -353,7 +353,7 @@ final class Links: NSObject, NSApplicationDelegate {
         var text = URLComponents()
         text.scheme = "https"
         text.host = "github.com"
-        text.path = "/Blaise1030/tabsh-browser/issues/new"
+        text.path = "/Blaise1030/tabs-browser/issues/new"
         text.queryItems = [
             URLQueryItem(
                 name: "body",

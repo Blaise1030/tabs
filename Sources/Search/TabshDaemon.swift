@@ -19,8 +19,8 @@ final class TabshDaemon {
 
     /// Where this browser's daemon listens.
     /// - 7681: standalone tabsh (`~/.tabsh`, web app / CLI / phone)
-    /// - 7682: installed Tabs (`tabsh-browser`)
-    /// - 7683: SEARCH_DEV Tabs (`tabsh-browser-dev`)
+    /// - 7682: installed Tabs (`tabs-browser`)
+    /// - 7683: SEARCH_DEV Tabs (`tabs-browser-dev`)
     /// - 7684+: SEARCH_PROBE worlds, one port each so two probes never share
     nonisolated static var port: Int {
         if let world = Store.world {

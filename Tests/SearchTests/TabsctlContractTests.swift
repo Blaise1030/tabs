@@ -1,15 +1,15 @@
 import XCTest
 @testable import Search
 
-/// The `tabsctl` contract: the verbs and fields Sources/TabsCLI sends must
-/// be the ones TabshAgentSocket answers. The CLI is a separate SwiftPM
-/// executable and cannot import Search, so its copy of the protocol strings
-/// is pinned against this one by reading its source.
+/// The `tabsctl` contract: the verbs and fields `daemon/src/bin/tabsctl.rs`
+/// sends must be the ones TabshAgentSocket answers. The CLI is a separate Rust
+/// binary and cannot import Search, so its copy of the protocol strings is
+/// pinned against this one by reading its source.
 final class TabsctlContractTests: XCTestCase {
     func testVerbsMatchTheCLISource() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let cli = try String(contentsOf: root.appendingPathComponent("Sources/TabsCLI/main.swift"), encoding: .utf8)
+        let cli = try String(contentsOf: root.appendingPathComponent("daemon/src/bin/tabsctl.rs"), encoding: .utf8)
         for verb in TabsctlProtocol.verbs {
             XCTAssertTrue(cli.contains("\"\(verb)\""), "tabsctl must send \(verb)")
         }

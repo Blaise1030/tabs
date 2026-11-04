@@ -2,8 +2,8 @@ import AppKit
 import Darwin
 import Foundation
 
-// The browser side of `tabsctl` (Sources/TabsCLI): a narrow Unix socket an
-// agent in a session uses to create a sibling session and have its tab
+// The browser side of `tabsctl` (daemon/src/bin/tabsctl.rs): a narrow Unix socket
+// an agent in a session uses to create a sibling session and have its tab
 // opened here, without stealing focus.
 //
 // Separate from the bench on purpose: the bench needs Settings consent
@@ -14,9 +14,8 @@ import Foundation
 // the peer's uid checked again before a word is read, one JSON object per
 // line in, one per line out, one request per connection.
 
-/// The verbs `tabsctl` may ask for. TabsCLI duplicates these strings (a
-/// SwiftPM executable cannot import this one); TabsctlContractTests pins
-/// the two copies together.
+/// The verbs `tabsctl` may ask for. The Rust CLI duplicates these strings;
+/// TabsctlContractTests pins the two copies together.
 enum TabsctlProtocol {
     static let createTerminal = "session.create.terminal"
     static let createAgent = "session.create.agent"

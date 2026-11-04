@@ -7,12 +7,10 @@
 #                        architecture to halve the minutes, or tick "Create a
 #                        release" to draft one you can look over
 #
-# Why not build.sh alone: build.sh expects a tabsh binary beside it
-# (TABSH_BINARY), normally from ../tabsh's target/release. There is no such
-# checkout on a runner, so this workflow clones tabsh, builds its daemon for
-# the same architecture, and hands the path to build.sh. The daemon is the
-# part that matters: without it the app opens but has no terminals and no
-# agents.
+# Why not build.sh alone: build.sh expects tabsh + tabsctl binaries.
+# Source is vendored in ./daemon; this workflow builds that tree for the same
+# architecture and hands the paths to build.sh. Without the daemon the app
+# opens but has no terminals and no agents.
 #
 # Signing: none, by choice. build.sh ad-hoc signs the app and the daemon, which
 # is enough for any Mac once the download's quarantine flag is off (see the
@@ -34,12 +32,6 @@ on:
         type: choice
         options: [both, arm64, x86_64]
         default: both
-      tabsh-ref:
-        description: tabsh branch, tag or commit to embed
-        required: false
-        # The daemon this browser was built and tested against. Move it when
-        # tabsh's API or embedded app changes, or type "main" for the newest.
-        default: v1.8.2
       release:
         description: Create a draft GitHub Release from this run
         type: boolean
@@ -51,9 +43,6 @@ permissions:
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
-
-env:
-  TABSH_REPOSITORY: https://github.com/Blaise1030/tabsh
 
 jobs:
   build:
@@ -68,10 +57,9 @@ jobs:
       matrix:
         include: ${{ fromJSON(inputs.arch == 'arm64' && '[{"arch":"arm64","rust_target":"aarch64-apple-darwin"}]' || inputs.arch == 'x86_64' && '[{"arch":"x86_64","rust_target":"x86_64-apple-darwin"}]' || '[{"arch":"arm64","rust_target":"aarch64-apple-darwin"},{"arch":"x86_64","rust_target":"x86_64-apple-darwin"}]') }}
     env:
-      TABSH_REF: ${{ inputs.tabsh-ref || 'v1.8.2' }}
       SEARCH_ARCH: ${{ matrix.arch }}
     outputs:
-      tabsh-commit: ${{ steps.tabsh.outputs.commit }}
+      tabsh-version: ${{ steps.tabsh.outputs.version }}
     steps:
       - uses: actions/checkout@v7
 
@@ -98,46 +86,44 @@ jobs:
             ~/Library/Caches/org.swift.swiftpm
           # The repository name is part of the key because SwiftPM records
           # absolute module-cache paths inside .build; a renamed repository
-          # (tabsh-browser → tabs) must not restore the old checkout's cache.
+          # (tabs-browser rename) must not restore the old checkout's cache.
           key: swiftpm-${{ matrix.arch }}-${{ github.repository }}-${{ hashFiles('Package.resolved') }}
           restore-keys: swiftpm-${{ matrix.arch }}-${{ github.repository }}-
 
-      # tabsh is public, so no token is needed. A branch, tag or commit all
-      # work; the commit is printed and lands in the release notes. Cloned
-      # before the cargo cache is restored: rust-cache makes its workspace
-      # folder if it is missing, and git won't clone into one that exists.
-      - name: Get tabsh
+      - name: Vendored daemon
         id: tabsh
         run: |
           set -euo pipefail
-          git clone --filter=blob:none "$TABSH_REPOSITORY" .tabsh-src
-          git -C .tabsh-src checkout "$TABSH_REF"
-          echo "commit=$(git -C .tabsh-src rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-          git -C .tabsh-src log -1 --format='tabsh %h %s'
+          test -f daemon/Cargo.toml
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' daemon/Cargo.toml | head -1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tabsh $VERSION (vendored in ./daemon — see daemon/VENDOR.md)"
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: .tabsh-src -> target
+          workspaces: daemon -> target
           key: ${{ matrix.rust_target }}
 
-      # The daemon embeds the web app (src/app-assets is committed), so no
-      # pnpm or Node step is needed — just cargo.
-      - name: Build the tabsh daemon
+      # The daemon + tabsctl live in ./daemon; no pnpm or Node step — just cargo.
+      - name: Build the tabsh daemon and tabsctl
         run: |
           set -euo pipefail
           cargo build --release --locked \
             --target "${{ matrix.rust_target }}" \
-            --manifest-path .tabsh-src/Cargo.toml
-          DAEMON=".tabsh-src/target/${{ matrix.rust_target }}/release/tabsh"
+            --manifest-path daemon/Cargo.toml
+          DAEMON="daemon/target/${{ matrix.rust_target }}/release/tabsh"
+          CLI="daemon/target/${{ matrix.rust_target }}/release/tabsctl"
           lipo -archs "$DAEMON" | grep -qx "${{ matrix.arch }}"
+          lipo -archs "$CLI" | grep -qx "${{ matrix.arch }}"
 
       # build.sh does the rest: SwiftPM release build, fonts, icon, plist,
       # ad-hoc signature, DMG and updater ZIP. "dmg" also writes an appcast;
       # the fork's updater is off, so it is simply ignored.
       - name: Build Tabs
         env:
-          TABSH_BINARY: ${{ github.workspace }}/.tabsh-src/target/${{ matrix.rust_target }}/release/tabsh
+          TABSH_BINARY: ${{ github.workspace }}/daemon/target/${{ matrix.rust_target }}/release/tabsh
+          TABSCTL_BINARY: ${{ github.workspace }}/daemon/target/${{ matrix.rust_target }}/release/tabsctl
         run: ./build.sh release dmg
 
       - name: Check what was built
@@ -147,15 +133,17 @@ jobs:
           APP="$OUT/Tabs.app"
           test -x "$APP/Contents/MacOS/Tabs"
           test -x "$APP/Contents/Resources/tabsh"
+          test -x "$APP/Contents/Resources/tabsctl"
           # TypingSounds loads this as a real bundle; v1.0.8 shipped a flat
           # Sounds/ folder here (no Contents/Info.plist).
           test -f "$APP/Contents/Resources/Search_Search.bundle/Contents/Info.plist"
           lipo -archs "$APP/Contents/MacOS/Tabs" | grep -qx "${{ matrix.arch }}"
           lipo -archs "$APP/Contents/Resources/tabsh" | grep -qx "${{ matrix.arch }}"
+          lipo -archs "$APP/Contents/Resources/tabsctl" | grep -qx "${{ matrix.arch }}"
           codesign --verify --deep --strict "$APP"
           test -f "$OUT/Tabs.zip"
           test -f "$OUT/Tabs.dmg"
-          echo "Tabs $(tr -d '[:space:]' < VERSION), ${{ matrix.arch }}, tabsh ${{ steps.tabsh.outputs.commit }}"
+          echo "Tabs $(tr -d '[:space:]' < VERSION), ${{ matrix.arch }}, tabsh ${{ steps.tabsh.outputs.version }}"
 
       # v1.0.8 reached GitHub Releases while crashing on every launch:
       # Bundle.module looked beside the .app / at the runner's .build path.
@@ -313,7 +301,7 @@ jobs:
             echo
             echo "---"
             echo
-            echo "Built from \`${GITHUB_SHA::7}\`, tabsh at \`${{ needs.build.outputs.tabsh-commit }}\`."
+            echo "Built from \`${GITHUB_SHA::7}\`, vendored tabsh \`${{ needs.build.outputs.tabsh-version }}\`."
             echo "SHA-256 of each file is in \`SHA256SUMS.txt\`."
           } >> notes.md
 

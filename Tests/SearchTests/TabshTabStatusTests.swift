@@ -51,5 +51,32 @@ final class TabshTabStatusTests: XCTestCase {
         // A move made here updates the tab at once, not on the echo.
         board.move(id, to: .completed)
         XCTAssertEqual(tab.tabsh?.state, .completed)
+
+        // Archiving from any status closes the tab; the card stays listed.
+        board.move(id, to: .archived)
+        XCTAssertEqual(board.sessions[id]?.state, .archived)
+        XCTAssertFalse(browser.tabs.contains(where: { $0.tabshSessionID == id }))
+        XCTAssertFalse(browser.parkedTabs.contains(where: { $0.tabshSessionID == id }))
+    }
+
+    func testBoardEventArchivingClosesTheTab() async throws {
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.prohibited)
+
+        let board = TabshSessions()
+        let browser = Browser(record: WindowRecord())
+        Browsers.register(browser)
+        let id = "tabsh-tab-archive-\(UUID().uuidString)"
+        browser.newTab()
+        let tab = try XCTUnwrap(browser.tabs.last)
+        tab.show(InternalPage(.tabsh, id))
+
+        board.install([card(id: id, status: "in_progress")])
+        XCTAssertTrue(browser.tabs.contains(where: { $0.tabshSessionID == id }))
+
+        board.applyBoardEvent(event(id: id, status: "archived"))
+        XCTAssertEqual(board.sessions[id]?.state, .archived)
+        XCTAssertFalse(browser.tabs.contains(where: { $0.tabshSessionID == id }))
+        XCTAssertFalse(browser.parkedTabs.contains(where: { $0.tabshSessionID == id }))
     }
 }
