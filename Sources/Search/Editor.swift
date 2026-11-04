@@ -25,13 +25,35 @@ struct EditorPanel: View {
     private var language: Syntax.Language { Syntax.Language(path: path) }
     private var dirty: Bool { exists && text != saved }
 
+    /// How far the code fades before it meets the chrome: solid at the edge
+    /// the header sits against, gone by the first line that shows — same
+    /// treatment as the agent chat transcript (`TabshAgent` edgeFade).
+    private static let fade: CGFloat = 18
+
     var body: some View {
         VStack(spacing: 0) {
             header
+            // A hard cut under the bar clipped mid-line; fade to the pane's
+            // ground instead, as the chat list does above the composer.
             CodeEditor(text: $text, language: language, onSave: save)
+                .overlay(alignment: .top) { edgeFade(top: true) }
+                .overlay(alignment: .bottom) { edgeFade(top: false) }
         }
         .background(Palette.ground)
         .onAppear(perform: load)
+    }
+
+    /// One end of the editor, faded to the ground the pane is drawn on.
+    private func edgeFade(top: Bool) -> some View {
+        LinearGradient(
+            colors: top
+                ? [Palette.ground, Palette.ground.opacity(0)]
+                : [Palette.ground.opacity(0), Palette.ground],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(height: Self.fade)
+        .allowsHitTesting(false)
     }
 
     private var header: some View {
@@ -73,19 +95,7 @@ struct EditorPanel: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 32)
-        // Solid at the top, gone by the first line: the header never draws a
-        // line across the page, it just darkens the edge the text slides
-        // under when it scrolls.
-        .background(
-            LinearGradient(
-                stops: [
-                    .init(color: Palette.ground, location: 0),
-                    .init(color: Palette.ground.opacity(0), location: 1),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
+        .background(Palette.ground)
     }
 
     private func load() {

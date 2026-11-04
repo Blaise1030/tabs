@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookThumbnailing
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -33,9 +34,13 @@ struct TabshChatChunk {
 
     init?(line: String) {
         guard let data = line.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = object["type"] as? String
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
+        self.init(object: object)
+    }
+
+    init?(object: [String: Any]) {
+        guard let type = object["type"] as? String else { return nil }
         self.type = type
         text = object["text"] as? String ?? ""
         requestID = object["request_id"] as? String ?? ""
@@ -531,6 +536,16 @@ final class TabshChat: ObservableObject {
         !open && !posting && pending == 0 && queued > 0
     }
 
+    /// Soft cap for tool output kept on a row. Unfolded views still show
+    /// enough to read; multi‑MB diffs stay out of the SwiftUI list.
+    private static let detailLimit = 12_000
+
+    nonisolated private static func clipDetail(_ text: String) -> String {
+        guard text.count > detailLimit else { return text }
+        let end = text.index(text.startIndex, offsetBy: detailLimit)
+        return String(text[..<end]) + "\n…"
+    }
+
     func send(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -630,6 +645,13 @@ final class TabshChat: ObservableObject {
     }
 
     private func readStream() async throws {
+        // Paint from the REST snapshot first. A multi‑MB transcript dripped
+        // through SSE used to arm an 80ms "history quiet" timer before any
+        // byte arrived; that timer committed an empty row list, the empty
+        // state stuck on screen, and the live stream never repaired it.
+        let painted = await loadHistorySnapshot()
+        var skipReplay = painted
+
         guard let request = Tabsh.chatStreamRequest(sessionID) else {
             throw TabshError.noToken
         }
@@ -639,19 +661,26 @@ final class TabshChat: ObservableObject {
             throw TabshError.refused(http.statusCode)
         }
 
-        // Every connection starts with the finished transcript. The first
-        // chunk replaces what the last connection left behind; the rest of
-        // the replay (and whatever comes after) appends to it.
-        loadingHistory = true
-        // Empty history never sends a chunk; start the quiet timer so the
-        // pane still leaves loading and can settle the scroll.
-        noteHistoryChunk()
-        var replacing = true
+        // SSE still replays history then lives. Skip the replay when REST
+        // already painted it; fall through to the quiet-timer path when it
+        // did not (brand-new card, or the snapshot failed).
+        if painted == 0 {
+            loadingHistory = true
+        }
+        var replacing = painted == 0
+        var replayed = 0
         for try await line in bytes.lines {
             guard !Task.isCancelled, !stopped else { return }
             guard line.hasPrefix("data:") else { continue }
             let raw = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
             guard let chunk = TabshChatChunk(line: raw) else { continue }
+            if skipReplay > 0 {
+                replayed += 1
+                if replayed <= skipReplay {
+                    continue
+                }
+                skipReplay = 0
+            }
             if replacing {
                 chunks.removeAll()
                 replacing = false
@@ -660,8 +689,51 @@ final class TabshChat: ObservableObject {
         }
     }
 
+    /// Pull `/chat` once and rebuild. Returns how many SSE replay events to
+    /// skip (the snapshot size), or 0 when there was nothing to paint.
+    private func loadHistorySnapshot() async -> Int {
+        loadingHistory = true
+        do {
+            let messages = try await Tabsh.chatHistory(sessionID)
+            guard !Task.isCancelled, !stopped else { return 0 }
+            guard !messages.isEmpty else {
+                // Brand-new card: nothing to paint; SSE will append live.
+                loadingHistory = false
+                return 0
+            }
+            var loaded: [TabshChatChunk] = []
+            loaded.reserveCapacity(min(messages.count, 4096))
+            for object in messages {
+                guard let chunk = TabshChatChunk(object: object) else { continue }
+                if let last = loaded.last,
+                   (chunk.type == "text_delta" || chunk.type == "thought_delta"),
+                   last.type == chunk.type {
+                    loaded[loaded.count - 1].text += chunk.text
+                } else {
+                    loaded.append(chunk)
+                }
+            }
+            chunks = loaded
+            rebuild()
+            loadingHistory = false
+            return messages.count
+        } catch {
+            // Fall back to SSE-only history below.
+            return 0
+        }
+    }
+
     private func accept(_ chunk: TabshChatChunk) {
-        chunks.append(chunk)
+        // Fold consecutive token/thought deltas into one chunk so a long
+        // replay is hundreds of entries rather than tens of thousands —
+        // rebuild walks stay cheap enough for the main thread.
+        if let last = chunks.last,
+           (chunk.type == "text_delta" || chunk.type == "thought_delta"),
+           last.type == chunk.type {
+            chunks[chunks.count - 1].text += chunk.text
+        } else {
+            chunks.append(chunk)
+        }
         // The daemon echoes the message it accepted. That echo is the real
         // bubble; the optimistic one goes when it arrives.
         if chunk.type == "user_text",
@@ -679,11 +751,13 @@ final class TabshChat: ObservableObject {
 
     /// History arrives as a tight SSE burst with no "done" marker. A short
     /// quiet window is the end of the replay; live turns restart the clock
-    /// on each token via `schedule` instead.
+    /// on each token via `schedule` instead. An empty commit is avoided by
+    /// only arming this timer from `accept` (after a chunk exists) or from
+    /// the REST fallback path after a failed snapshot.
     private func noteHistoryChunk() {
         historyIdle?.cancel()
         historyIdle = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 80_000_000)
+            try? await Task.sleep(nanoseconds: 200_000_000)
             guard let self, !Task.isCancelled else { return }
             self.historyIdle = nil
             self.rebuild()
@@ -743,19 +817,22 @@ final class TabshChat: ObservableObject {
                     break
                 }
                 let id = chunk.toolID ?? "tool-\(index)"
+                // Cap stored detail: some tool payloads are multi‑MB diffs.
+                // Keeping them all in every row made the list refuse to paint.
+                let detail = Self.clipDetail(chunk.toolDetail)
                 if let at = tools[id] {
                     if !chunk.toolSummary.isEmpty { rows[at].text = chunk.toolSummary }
-                    if !chunk.toolDetail.isEmpty, !rows[at].detail.contains(chunk.toolDetail) {
+                    if !detail.isEmpty, !rows[at].detail.contains(detail) {
                         rows[at].detail = rows[at].detail.isEmpty
-                            ? chunk.toolDetail
-                            : rows[at].detail + "\n\n" + chunk.toolDetail
+                            ? detail
+                            : Self.clipDetail(rows[at].detail + "\n\n" + detail)
                     }
                 } else {
                     tools[id] = rows.count
                     rows.append(.init(id: "tool-\(index)",
                                       kind: .tool,
                                       text: chunk.toolSummary,
-                                      detail: chunk.toolDetail))
+                                      detail: detail))
                 }
                 if open { sawAgent = true }
             case "plan":
@@ -824,9 +901,15 @@ final class TabshChat: ObservableObject {
             }
         }
 
-        self.rows = TabshChat.grouped(rows)
-        busy = open || !pending.isEmpty || !queue.isEmpty
-        waiting = (open || !pending.isEmpty || !queue.isEmpty) && !sawAgent
+        let nextRows = TabshChat.grouped(rows)
+        let nextBusy = open || !pending.isEmpty || !queue.isEmpty
+        let nextWaiting = nextBusy && !sawAgent
+        // Must write `self.rows` — a bare `rows =` assigns the local rebuild
+        // buffer and leaves the published transcript empty forever (the
+        // "No messages yet" blank on long chats).
+        self.rows = nextRows
+        if nextBusy != busy { busy = nextBusy }
+        if nextWaiting != waiting { waiting = nextWaiting }
 
         // The agent has finished and nothing is on the wire: the next line
         // waits for exactly this moment. See `canDrain` for why `busy` is
@@ -884,8 +967,18 @@ struct TabshAgentPane: View {
     /// The slice of the transcript currently in the list.
     private var displayedRows: [TabshChatRow] {
         let rows = chat.rows
-        guard hiddenPrefix > 0, hiddenPrefix < rows.count else { return rows }
-        return Array(rows[hiddenPrefix...])
+        // History finishes by publishing the whole thread, then `onChange`
+        // windows to the newest page. The first SwiftUI pass still sees
+        // `hiddenPrefix == 0` and used to mount every bubble at once — a
+        // multi‑MB chat painted nothing (and beachballed) until that caught
+        // up. While we are still settling, never hand the list more than
+        // one page even if the prefix has not been written yet.
+        var prefix = hiddenPrefix
+        if settlingScroll, prefix == 0, rows.count > Self.pageSize {
+            prefix = rows.count - Self.pageSize
+        }
+        guard prefix > 0, prefix < rows.count else { return rows }
+        return Array(rows[prefix...])
     }
 
     private var hasOlder: Bool { hiddenPrefix > 0 }
@@ -1238,7 +1331,13 @@ private struct TabshAgentComposer: View {
     @State private var attachments: [TabshPendingAttachment] = []
     @State private var uploading = false
     @State private var droppingFiles = false
+    /// `@` opens a searchable list of the session's project files; the + disc
+    /// still uses the system open panel for anything outside the tree.
+    @State private var filesOpen = false
+    /// `/` opens skills from the project and ~/.cursor/skills.
+    @State private var skillsOpen = false
     @ObservedObject private var dictation = Dictation.shared
+    @ObservedObject private var sessions = TabshSessions.shared
 
     init(sessionID: String, browser: Browser, chat: TabshChat, scrollToken: Binding<Int>) {
         self.sessionID = sessionID
@@ -1261,7 +1360,8 @@ private struct TabshAgentComposer: View {
             // The composer is one card: the attachments, the plus, the
             // mic, the field and the send all live inside its squircle.
             // Drops and pasted images land as chips here, not as raw
-            // paths in the field (see TabshDrop).
+            // paths in the field (see TabshDrop). `@` / `/` float above
+            // the card so opening them does not shift the layout.
             VStack(alignment: .leading, spacing: 6) {
                 if !attachments.isEmpty { attachmentBar }
 
@@ -1298,20 +1398,33 @@ private struct TabshAgentComposer: View {
                                        focus: focusToken,
                                        placeholder: "Message",
                                        onSubmit: send,
-                                       onFiles: attach)
+                                       onFiles: attach,
+                                       onPickFiles: {
+                                           skillsOpen = false
+                                           filesOpen = true
+                                       },
+                                       onPickSkills: {
+                                           filesOpen = false
+                                           skillsOpen = true
+                                       })
                         .frame(height: composerHeight)
 
-                    if chat.busy {
-                        Button(action: chat.stopTurn) {
-                            Image(systemName: "stop.fill")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(Palette.muted)
-                                .composerDisc()
-                        }
-                        .buttonStyle(.plain)
-                        .help("Stop the agent")
-                        .accessibilityLabel("Stop the agent")
+                    // Always keep the stop disc's width. Dropping it when the
+                    // turn ends widened the field, remasured height, and could
+                    // beachball the same way typing after a restart did.
+                    Button(action: chat.stopTurn) {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Palette.muted)
+                            .composerDisc()
                     }
+                    .buttonStyle(.plain)
+                    .opacity(chat.busy ? 1 : 0)
+                    .disabled(!chat.busy)
+                    .allowsHitTesting(chat.busy)
+                    .accessibilityHidden(!chat.busy)
+                    .help("Stop the agent")
+                    .accessibilityLabel("Stop the agent")
 
                     if uploading {
                         ProgressView()
@@ -1366,14 +1479,44 @@ private struct TabshAgentComposer: View {
                 TabshDrop.urls(from: providers) { attach($0) }
                 return true
             }
+            .overlay(alignment: .top) {
+                Group {
+                    if skillsOpen {
+                        TabshComposerSkillPicker(
+                            projectPath: sessions.sessions[sessionID]?.cwd
+                        ) { skill in
+                            applySkill(skill)
+                            skillsOpen = false
+                        } dismiss: {
+                            skillsOpen = false
+                        }
+                        .frame(maxWidth: .infinity)
+                        .composerMenuChrome()
+                    } else if filesOpen {
+                        TabshComposerFilePicker(sessionID: sessionID) { url in
+                            attach([url])
+                            filesOpen = false
+                        } dismiss: {
+                            filesOpen = false
+                        }
+                        .frame(maxWidth: .infinity)
+                        .composerMenuChrome()
+                    }
+                }
+                .floatAboveComposer()
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            .animation(Motion.settle, value: skillsOpen || filesOpen)
         }
         // No bar behind the field: the composer's own card is the only
         // surface, so the conversation runs down to the same ground rather
-        // than ending on a grey footer.
+        // than ending on a grey footer. zIndex keeps the floating `@` / `/`
+        // menu above the transcript when it draws past the card's top.
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 22)
         .padding(.top, 9)
         .padding(.bottom, 12)
+        .zIndex((skillsOpen || filesOpen) ? 2 : 0)
         .onAppear {
             draft = TabshDrafts.shared.text(for: sessionID)
             focusToken += 1
@@ -1528,51 +1671,47 @@ private struct TabshAgentComposer: View {
         }
         focusToken += 1
     }
+
+    /// Mentions the skill in the draft and attaches its `SKILL.md`, so the
+    /// agent both sees `/name` and can read the instructions.
+    private func applySkill(_ skill: TabshSkill) {
+        let mention = "/\(skill.name)"
+        let gap = draft.isEmpty || draft.hasSuffix(" ") || draft.hasSuffix("\n") ? "" : " "
+        draft += gap + mention + " "
+        attach([skill.url])
+    }
 }
 
-/// One file waiting in the composer: a picture of itself, or a small paper
-/// chip, with the cross that takes it back out. Shared by the agent chat and
-/// New Agent so a drop looks the same in both.
+/// One file waiting in the composer: a square thumbnail — the picture itself
+/// for images, a Quick Look preview (or a doc mark and extension) for
+/// everything else — with the cross that takes it back out. Shared by the
+/// agent chat and New Agent so a drop looks the same in both.
 struct TabshAttachmentChip: View {
     let attachment: TabshPendingAttachment
     let remove: () -> Void
 
     @State private var image: NSImage?
 
+    private static let size: CGFloat = 48
+    private static let radius: CGFloat = 8
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            if attachment.isImage, let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 48, height: 48)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(Palette.hairline, lineWidth: 1)
-                    )
-            } else {
-                HStack(spacing: 5) {
-                    Image(systemName: "doc")
-                        .font(.system(size: 11, weight: .medium))
-                    Text(attachment.name)
-                        .font(.system(size: 10.5))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: 120, alignment: .leading)
+            Group {
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    fileTile
                 }
-                .foregroundStyle(Palette.ink)
-                .padding(.horizontal, 8)
-                .frame(height: 40)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Palette.ground)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Palette.hairline, lineWidth: 1)
-                )
             }
+            .frame(width: Self.size, height: Self.size)
+            .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+                    .stroke(Palette.hairline, lineWidth: 1)
+            )
 
             Button(action: remove) {
                 Image(systemName: "xmark.circle.fill")
@@ -1588,8 +1727,248 @@ struct TabshAttachmentChip: View {
         .padding(.trailing, 5)
         .help(attachment.name)
         .task(id: attachment.url) {
-            guard attachment.isImage else { return }
-            image = NSImage(contentsOf: attachment.url)
+            image = nil
+            if attachment.isImage {
+                image = NSImage(contentsOf: attachment.url)
+            } else {
+                image = await Self.preview(of: attachment.url)
+            }
+        }
+    }
+
+    /// Same 48pt square as an image thumb: a paper mark over the short
+    /// extension (or the filename when there is none), so a row of mixed
+    /// attachments reads as one strip of tiles when Quick Look has nothing.
+    private var fileTile: some View {
+        let ext = attachment.url.pathExtension
+        let label = ext.isEmpty
+            ? attachment.name
+            : ext.uppercased()
+        return VStack(spacing: 3) {
+            Image(systemName: "doc")
+                .font(.system(size: 16, weight: .medium))
+            Text(label)
+                .font(.system(size: 9, weight: .semibold))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 4)
+        }
+        .foregroundStyle(Palette.ink)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Palette.ground)
+    }
+
+    /// A Quick Look page of the file, sized for the chip — so a PDF sits at
+    /// the same height as a screenshot instead of a shorter name pill.
+    private static func preview(of url: URL) async -> NSImage? {
+        let request = QLThumbnailGenerator.Request(
+            fileAt: url,
+            size: CGSize(width: size * 2, height: size * 2),
+            scale: 2,
+            representationTypes: .thumbnail
+        )
+        return await withCheckedContinuation { continuation in
+            QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { rep, _ in
+                continuation.resume(returning: rep?.nsImage)
+            }
+        }
+    }
+}
+
+/// `@` on the composer: a searchable list of the project's files (the same
+/// tree the explorer reads), so attaching stays inside the card instead of
+/// bouncing out to the system open panel. The + disc still opens that panel
+/// for files outside the tree.
+struct TabshComposerFilePicker: View {
+    var sessionID: String? = nil
+    var rootPath: String? = nil
+    let pick: (URL) -> Void
+    let dismiss: () -> Void
+
+    @State private var query = ""
+    @State private var root = ""
+    @State private var files: [String] = []
+    @State private var active = 0
+    @State private var loading = true
+    @State private var failure: String?
+    @FocusState private var focused: Bool
+
+    private var filtered: [String] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return files }
+        return files.filter { $0.localizedCaseInsensitiveContains(needle) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            searchField
+            if let failure {
+                Text(failure)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.muted)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 6)
+            } else if loading {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Reading project files…")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Palette.muted)
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 8)
+            } else if filtered.isEmpty {
+                Text(files.isEmpty ? "No files in this project yet." : "No files match.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.muted)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 6)
+            } else {
+                optionsList
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task { await load() }
+        .onChange(of: query) { _, _ in
+            active = filtered.isEmpty ? -1 : 0
+        }
+        .onKeyPress(.upArrow) {
+            active = TabshFolders.moveActive(active, by: -1, count: filtered.count)
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            active = TabshFolders.moveActive(active, by: 1, count: filtered.count)
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            dismiss()
+            return .handled
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.faint)
+            TextField("Search project files…", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5))
+                .focused($focused)
+                .onSubmit { chooseActive() }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Palette.hover)
+        )
+        .onAppear { focused = true }
+    }
+
+    private var optionsList: some View {
+        let rows = filtered
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { index, path in
+                        optionRow(index: index, path: path)
+                    }
+                }
+                .padding(4)
+            }
+            // Same as the model wheel: a legacy scroller in a popover reads
+            // as a thick grey strip beside the rows.
+            .scrollIndicators(.never)
+            .frame(height: listHeight(for: rows.count))
+            .onChange(of: active) {
+                guard active >= 0, active < rows.count else { return }
+                withAnimation(.easeOut(duration: 0.12)) {
+                    proxy.scrollTo(active, anchor: .center)
+                }
+            }
+        }
+    }
+
+    private static let rowHeight: CGFloat = 25
+    private static let listMaxHeight: CGFloat = 240
+
+    private func listHeight(for count: Int) -> CGFloat {
+        let rows = CGFloat(count) * Self.rowHeight + CGFloat(max(count - 1, 0)) + 8
+        return min(rows, Self.listMaxHeight)
+    }
+
+    private func optionRow(index: Int, path: String) -> some View {
+        let lit = index == active
+        return Button { choose(path) } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "doc")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Palette.muted)
+                Text(path)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Palette.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(lit ? Palette.hover : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(height: Self.rowHeight)
+        .id(index)
+        .help(absoluteURL(path)?.path ?? path)
+    }
+
+    private func chooseActive() {
+        let rows = filtered
+        guard active >= 0, active < rows.count else { return }
+        choose(rows[active])
+    }
+
+    private func choose(_ path: String) {
+        guard let url = absoluteURL(path) else { return }
+        pick(url)
+    }
+
+    private func absoluteURL(_ relative: String) -> URL? {
+        guard !root.isEmpty else { return nil }
+        return URL(fileURLWithPath: root)
+            .appendingPathComponent(relative)
+            .standardizedFileURL
+    }
+
+    private func load() async {
+        loading = true
+        failure = nil
+        do {
+            let tree: Tabsh.Tree
+            if let sessionID, !sessionID.isEmpty {
+                tree = try await Tabsh.tree(session: sessionID)
+            } else if let rootPath, !rootPath.isEmpty {
+                tree = try await Tabsh.tree(path: rootPath)
+            } else {
+                failure = "No project folder to list."
+                loading = false
+                return
+            }
+            root = tree.root
+            files = tree.paths
+                .filter { !$0.hasSuffix("/") }
+                .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            active = files.isEmpty ? -1 : 0
+            loading = false
+        } catch {
+            failure = error.localizedDescription
+            loading = false
         }
     }
 }
@@ -1852,7 +2231,7 @@ private struct ChatTopKey: PreferenceKey {
 /// spinner and the send are all this disc, so they sit on one centre line —
 /// they used to be 26 and 28 points, bottom-aligned in the field's row,
 /// which put them a point apart and both of them low.
-private extension View {
+extension View {
     func composerDisc(fill: Color = Palette.ground, ring: Bool = true) -> some View {
         self
             .frame(width: ComposerDisc.size, height: ComposerDisc.size)
@@ -1866,9 +2245,32 @@ private extension View {
             // put the disc's centre on the text's line rather than its floor.
             .padding(.bottom, ComposerDisc.lift)
     }
+
+    /// Card chrome for the `@` / `/` menus that sit above the composer.
+    /// Prefer this over `.popover` — the AppKit field anchors those wrong.
+    func composerMenuChrome() -> some View {
+        self
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Palette.ground)
+                    .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Palette.hairline, lineWidth: 1)
+            )
+    }
+
+    /// Pin this view just above a parent's top edge in an `.overlay(alignment:
+    /// .top)`, without taking vertical layout space in the parent.
+    func floatAboveComposer(gap: CGFloat = 6) -> some View {
+        self
+            .padding(.bottom, gap)
+            .alignmentGuide(.top) { $0[.bottom] }
+    }
 }
 
-private enum ComposerDisc {
+enum ComposerDisc {
     static let size: CGFloat = 28
     static let lift: CGFloat = 2
 }
@@ -1877,7 +2279,9 @@ private enum ComposerDisc {
 
 private struct TabshChatRowView: View {
     let row: TabshChatRow
-    @ObservedObject var chat: TabshChat
+    /// Not `@ObservedObject`: busy/waiting flips on stop must not rebuild
+    /// every bubble. Approve/answer only need a reference to call into.
+    let chat: TabshChat
 
     @Environment(\.colorScheme) private var scheme
     @State private var unfolded = false
@@ -2173,7 +2577,8 @@ private struct TabshChatRowView: View {
 /// on every streamed token does not wipe a half-filled answer.
 private struct TabshQuestionCard: View {
     let row: TabshChatRow
-    @ObservedObject var chat: TabshChat
+    /// Reference only — see `TabshChatRowView.chat`.
+    let chat: TabshChat
 
     @Environment(\.colorScheme) private var scheme
     @State private var values: [String: Value] = [:]
@@ -2971,13 +3376,18 @@ enum MarkdownParser {
 /// there are more, and a scroll beyond that. Return sends, as in the web
 /// panel; Shift-Return and Option-Return write a line break. Files dropped
 /// or images pasted become attachments rather than raw paths in the text.
-private struct TabshComposerField: NSViewRepresentable {
+/// Shared by the agent chat and the New Agent page.
+struct TabshComposerField: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
     var focus: Int
     var placeholder: String
     let onSubmit: () -> Void
     var onFiles: (([URL]) -> Void)? = nil
+    /// `@` at a token boundary — project file list on the composer.
+    var onPickFiles: (() -> Void)? = nil
+    /// `/` at a token boundary — skills under the project and ~/.cursor.
+    var onPickSkills: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -2998,6 +3408,12 @@ private struct TabshComposerField: NSViewRepresentable {
         text.delegate = context.coordinator
         text.onFiles = { [weak coordinator = context.coordinator] urls in
             coordinator?.parent.onFiles?(urls)
+        }
+        text.onPickFiles = { [weak coordinator = context.coordinator] in
+            coordinator?.parent.onPickFiles?()
+        }
+        text.onPickSkills = { [weak coordinator = context.coordinator] in
+            coordinator?.parent.onPickSkills?()
         }
         text.isRichText = false
         text.isEditable = true
@@ -3057,10 +3473,22 @@ private struct TabshComposerField: NSViewRepresentable {
         textView.onFiles = { [weak coordinator = context.coordinator] urls in
             coordinator?.parent.onFiles?(urls)
         }
+        textView.onPickFiles = { [weak coordinator = context.coordinator] in
+            coordinator?.parent.onPickFiles?()
+        }
+        textView.onPickSkills = { [weak coordinator = context.coordinator] in
+            coordinator?.parent.onPickSkills?()
+        }
+        // Remeasure only when the binding pushed different text in (dictation,
+        // restore). Keystrokes already remeasure in textDidChange; calling
+        // updateHeight on every SwiftUI pass fed height ↔ layout forever and
+        // beachballed the first character after a restart.
+        var remounted = false
         if textView.string != text {
             textView.string = text
             textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
             textView.needsDisplay = true
+            remounted = true
         }
         textView.placeholder = placeholder
         if context.coordinator.lastFocus != focus {
@@ -3069,13 +3497,18 @@ private struct TabshComposerField: NSViewRepresentable {
                 textView.window?.makeFirstResponder(textView)
             }
         }
-        context.coordinator.updateHeight()
+        if remounted {
+            context.coordinator.updateHeight()
+        }
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: TabshComposerField
         weak var textView: NSTextView?
         var lastFocus = 0
+        /// Coalesce height writes so a layout pass cannot chase its own
+        /// `.frame(height:)` update on the next tick.
+        private var pendingHeight: CGFloat?
 
         init(_ parent: TabshComposerField) {
             self.parent = parent
@@ -3096,10 +3529,16 @@ private struct TabshComposerField: NSViewRepresentable {
             layout.ensureLayout(for: container)
             let used = layout.usedRect(for: container).height
                 + textView.textContainerInset.height * 2
+            // Whole points only: a 32↔33 oscillation from fractional usedRect
+            // used to pass the old 0.5ε guard on every layout and freeze input.
             let wanted = min(150, max(32, ceil(used)))
-            guard abs(parent.height - wanted) > 0.5 else { return }
+            guard wanted != parent.height, pendingHeight != wanted else { return }
+            pendingHeight = wanted
             DispatchQueue.main.async { [weak self] in
-                self?.parent.height = wanted
+                guard let self else { return }
+                self.pendingHeight = nil
+                guard self.parent.height != wanted else { return }
+                self.parent.height = wanted
             }
         }
 
@@ -3118,12 +3557,17 @@ private struct TabshComposerField: NSViewRepresentable {
 }
 
 /// A scroll view that says when its width changed, so the field can work out
-/// again how tall its wrapped text is.
+/// again how tall its wrapped text is. Height changes also call layout — those
+/// must not remeasure, or the height binding and the frame chase each other.
 private final class ComposerScrollView: NSScrollView {
     var onLayout: (() -> Void)?
+    private var lastWidth: CGFloat = -1
 
     override func layout() {
         super.layout()
+        let width = bounds.width
+        guard abs(width - lastWidth) > 0.5 else { return }
+        lastWidth = width
         onLayout?()
     }
 }

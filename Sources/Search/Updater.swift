@@ -29,7 +29,7 @@ import Security
 final class Updater: ObservableObject {
     static let shared = Updater()
 
-    /// tabsh-browser is a fork of Tabs: upstream's feed names builds signed
+    /// tabs-browser is a fork of Tabs: upstream's feed names builds signed
     /// by Office Commun, and installing one would replace this app with
     /// theirs. Off until this app has a feed and an identity of its own.
     nonisolated static let enabled = false

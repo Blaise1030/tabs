@@ -202,6 +202,15 @@ final class TabshAttachTextView: NSTextView {
     /// would be swallowed. Read by key code, so the keypad's Enter counts too.
     var onCommandReturn: (() -> Void)?
 
+    /// `@` at a token boundary opens the composer's project-file list (not
+    /// the system open panel the + disc uses). The character is not inserted —
+    /// picking a row attaches a chip instead.
+    var onPickFiles: (() -> Void)?
+
+    /// `/` at a token boundary opens the skills list. Paths like `src/foo`
+    /// still type a slash; a lone `/` opens the picker.
+    var onPickSkills: (() -> Void)?
+
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 || event.keyCode == 76,
            event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command,
@@ -209,7 +218,33 @@ final class TabshAttachTextView: NSTextView {
             onCommandReturn()
             return
         }
+        if event.characters == "@",
+           event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+           !hasMarkedText(),
+           atTokenBoundary,
+           let onPickFiles {
+            onPickFiles()
+            return
+        }
+        if event.characters == "/",
+           event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+           !hasMarkedText(),
+           atTokenBoundary,
+           let onPickSkills {
+            onPickSkills()
+            return
+        }
         super.keyDown(with: event)
+    }
+
+    /// Start of the field, or after whitespace / a newline — so `user@host`
+    /// still types an `@`, and `src/foo` still types a `/`, while a lone
+    /// `@` or `/` opens its picker.
+    private var atTokenBoundary: Bool {
+        let location = selectedRange().location
+        guard location > 0 else { return true }
+        let index = string.index(string.startIndex, offsetBy: location - 1)
+        return string[index].isWhitespace || string[index].isNewline
     }
 
     /// The grey line an empty field shows, drawn here rather than laid over

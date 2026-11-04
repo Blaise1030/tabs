@@ -13,3 +13,7 @@ __pycache__/
 *.provisionprofile
 *.p12
 *.mobileprovision
+
+# Vendored daemon (./daemon): keep source, ignore local builds.
+daemon/target/
+daemon/uploads/

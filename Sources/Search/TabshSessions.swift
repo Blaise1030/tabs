@@ -1180,13 +1180,15 @@ final class TabshSessions: ObservableObject {
 
     /// Move a card, as the board's menu does. The daemon is told with the same
     /// user-sourced change; the panel and the tab update at once, the socket
-    /// confirms.
+    /// confirms. Archiving closes any open tab and drops local terminal/chat
+    /// sockets; the daemon kills the PTY or ACP process and keeps the card.
     func move(_ id: String, to status: TabshStatus) {
         guard var session = sessions[id], session.status != status.rawValue else { return }
         session.status = status.rawValue
         session.statusAt = Int(Date().timeIntervalSince1970)
         sessions[id] = session
         updateTabs()
+        if status == .archived { shelve(id) }
         Task { try? await Tabsh.setStatus(id, status.rawValue) }
     }
 
@@ -1197,12 +1199,7 @@ final class TabshSessions: ObservableObject {
         guard sessions[id] != nil else { return }
         sessions.removeValue(forKey: id)
         forgetLocal(id)
-        for browser in Browsers.all {
-            for tab in browser.tabs + browser.parkedTabs {
-                guard tab.tabshSessionID == id else { continue }
-                browser.close(tab)
-            }
-        }
+        closeTabs(for: id)
         Task {
             do {
                 try await Tabsh.deleteSession(id)
@@ -1212,6 +1209,24 @@ final class TabshSessions: ObservableObject {
                 refresh()
             }
         }
+    }
+
+    /// Close every open or parked tab for a card.
+    private func closeTabs(for id: String) {
+        for browser in Browsers.all {
+            for tab in browser.tabs + browser.parkedTabs {
+                guard tab.tabshSessionID == id else { continue }
+                browser.close(tab)
+            }
+        }
+    }
+
+    /// Archive: close tabs and drop local terminal/chat sockets. Drafts stay
+    /// so reopening the card can pick them up; the daemon stops the process.
+    private func shelve(_ id: String) {
+        closeTabs(for: id)
+        TabshTerminals.shared.close(id)
+        TabshChats.shared.close(id)
     }
 
     /// Local pieces that outlive a closed tab — sockets, drafts — so a
@@ -1406,6 +1421,11 @@ final class TabshSessions: ObservableObject {
             info.note = note
             sessions[id] = info
             updateTabs()
+            // Archive from any column closes the tab and local sockets; the
+            // daemon stops the PTY/ACP. The card stays on the board.
+            if was != "archived", status == "archived" {
+                shelve(id)
+            }
             // A hook's or the agent's own move is news; a move made here, or
             // on the board, is not (see AgentNotify).
             if source == "hook", was != status {
