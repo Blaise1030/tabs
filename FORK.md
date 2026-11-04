@@ -50,9 +50,10 @@ SEARCH_DEV=1 ./build.sh     # a real .app in build/, named for the branch
 ### On GitHub Actions
 
 `.github/workflows/build.yml` builds the app where there is no Xcode-licensed Mac to hand: it
-clones [Blaise1030/tabsh](https://github.com/Blaise1030/tabsh), builds its daemon, and passes it
-to `build.sh` as `TABSH_BINARY`, so the download carries terminals and agents with it. The daemon
-is pinned to the `v1.8.1` tag by default; a manual run may name another branch, tag or commit.
+builds the daemon from the vendored tree in [`tabsh/`](tabsh/) (from
+[Blaise1030/tabsh](https://github.com/Blaise1030/tabsh) — see [`tabsh/VENDOR.md`](tabsh/VENDOR.md)),
+and passes the binary to `build.sh` as `TABSH_BINARY`, so the download carries terminals and
+agents with it.
 
 - **Actions → Build → Run workflow** builds without releasing and leaves `Tabs.zip` and
   `Tabs.dmg` as run artifacts. Pick one architecture to halve the runner minutes (macOS bills at
@@ -268,9 +269,17 @@ Each milestone should be additive files where possible. Avoid editing `Browser.s
 ## Merge policy
 
 - Track upstream `main`; merge it in at least monthly, and before starting a new milestone.
+- **Automated:** `.github/workflows/sync-upstream.yml` runs every Monday (and on demand). It
+  merges `driceroland/Search` `main` into `chore/sync-upstream` and opens a PR, or files an
+  `upstream-sync` issue on conflict. Review that PR; never auto-merge it. Enable
+  Settings → Actions → General → “Allow GitHub Actions to create and approve pull requests”
+  so the bot can open the PR.
+- **Dependencies:** `.github/dependabot.yml` watches SwiftPM (root), `site/` (npm), `tabsh/`
+  (Cargo), and GitHub Actions. Turn on Dependabot alerts + security updates under
+  Settings → Code security (off by default on a private repo).
 - Land small commits that a merge can reason about; no repo-wide reformatting.
 - Prefer new files plus one registration line over rewrites of upstream files.
-- Run `swift test` (and the app, ad hoc) after each merge.
+- Run `swift test` (and a quick ad-hoc launch) after each merge.
 - Upstream's own rules still apply to inherited code: no new dependencies, no analytics, no
   phone-home, WebKit only.
 
