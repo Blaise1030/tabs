@@ -325,8 +325,8 @@ final class TabshChats {
 /// What has been typed into a session's composer and not sent yet, kept for
 /// the session rather than for the view. The pane is built again every time
 /// its tab comes back to the front, and a tab can be closed and reopened, so
-/// a half-written message lives here and is handed back when the composer is
-/// built — this launch or the next.
+/// a half-written message — its attached files and pictures too — lives here
+/// and is handed back when the composer is built, this launch or the next.
 @MainActor
 final class TabshDrafts {
     static let shared = TabshDrafts()
@@ -336,12 +336,18 @@ final class TabshDrafts {
     static let dictatedName = Notification.Name("tabsh.draft.dictated")
 
     private static let key = "tabshDrafts"
+    /// The files and pictures waiting on each session's message, kept apart
+    /// from the words so a draft without attachments costs one dictionary
+    /// lookup and nothing else.
+    private static let filesKey = "tabshDraftFiles"
 
     private let store = Store.settings
     private var texts: [String: String]
+    private var files: [String: [String]]
 
     init() {
         texts = store.dictionary(forKey: Self.key) as? [String: String] ?? [:]
+        files = store.dictionary(forKey: Self.filesKey) as? [String: [String]] ?? [:]
     }
 
     func text(for session: String) -> String {
@@ -358,6 +364,31 @@ final class TabshDrafts {
             texts[session] = text
         }
         store.set(texts, forKey: Self.key)
+    }
+
+    /// The chips still waiting on a session's message, in the order they
+    /// were attached. A file that has gone from disk since is dropped
+    /// quietly rather than restored as a chip that cannot be sent.
+    func attachments(for session: String) -> [TabshPendingAttachment] {
+        (files[session] ?? []).compactMap { path in
+            let url = URL(fileURLWithPath: path)
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return TabshPendingAttachment(url: url)
+        }
+    }
+
+    /// Kept beside the words for the same reason: the composer is built
+    /// again whenever the tab comes back, and the attachments have to come
+    /// with the half-written message. Sending clears them.
+    func setAttachments(_ attachments: [TabshPendingAttachment], for session: String) {
+        let paths = attachments.map(\.url.path)
+        guard files[session] != paths else { return }
+        if paths.isEmpty {
+            files.removeValue(forKey: session)
+        } else {
+            files[session] = paths
+        }
+        store.set(files, forKey: Self.filesKey)
     }
 
     /// Appends settled dictation to a draft and tells any open composer.
@@ -1334,11 +1365,12 @@ private struct TabshAgentComposer: View {
     /// What is in the composer. Kept for the session rather than the view:
     /// the pane is built again every time its tab comes back to the front (and
     /// the tab can be closed and restored), so a message half typed has to
-    /// wait somewhere that outlives the view.
+    /// wait somewhere that outlives the view — its files and pictures too,
+    /// not only its words.
     @State private var draft: String
     @State private var composerHeight: CGFloat = 32
     @State private var focusToken = 0
-    @State private var attachments: [TabshPendingAttachment] = []
+    @State private var attachments: [TabshPendingAttachment]
     @State private var uploading = false
     @State private var droppingFiles = false
     /// `@` opens a searchable list of the session's project files; the + disc
@@ -1355,6 +1387,7 @@ private struct TabshAgentComposer: View {
         _chat = ObservedObject(wrappedValue: chat)
         _scrollToken = scrollToken
         _draft = State(initialValue: TabshDrafts.shared.text(for: sessionID))
+        _attachments = State(initialValue: TabshDrafts.shared.attachments(for: sessionID))
     }
 
     var body: some View {
@@ -1536,6 +1569,11 @@ private struct TabshAgentComposer: View {
         .onChange(of: draft) { _, text in
             TabshDrafts.shared.set(text, for: sessionID)
         }
+        // The chips wait with the words. Sending clears the array, and that
+        // clears the draft too (see send), so a sent message leaves none.
+        .onChange(of: attachments) { _, waiting in
+            TabshDrafts.shared.setAttachments(waiting, for: sessionID)
+        }
         .onReceive(NotificationCenter.default.publisher(for: TabshDrafts.dictatedName)) { note in
             guard (note.object as? String) == sessionID else { return }
             draft = TabshDrafts.shared.text(for: sessionID)
@@ -1634,6 +1672,9 @@ private struct TabshAgentComposer: View {
                 }
                 let combined = Self.withImages(text, paths)
                 attachments.removeAll()
+                // The chips are gone with the message, and so is what the
+                // next build of this composer would have restored.
+                TabshDrafts.shared.setAttachments([], for: sessionID)
                 // Keep anything typed while the files were going up.
                 if draft == draftAtSend { draft = "" }
                 uploading = false

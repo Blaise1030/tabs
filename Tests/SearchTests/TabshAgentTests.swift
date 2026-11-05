@@ -164,6 +164,61 @@ final class TabshAgentTests: XCTestCase {
         XCTAssertEqual(TabshDrafts().text(for: session), "")
     }
 
+    /// New Agent is built again whenever its tab comes back, so the prompt,
+    /// files, folder and chips have to outlive the view — and leave once
+    /// the card is made.
+    @MainActor
+    func testANewAgentDraftWaitsUntilTheCardIsMade() {
+        let drafts = TabshNewDraft.shared
+        drafts.clear()
+        defer { drafts.clear() }
+
+        XCTAssertNil(drafts.current)
+
+        drafts.save(TabshNewDraft.Snapshot(
+            prompt: "fix the flaky test",
+            folder: "/Users/me/code",
+            providerName: "Cursor",
+            modelID: "gpt",
+            modelName: "GPT",
+            agentModeID: "agent",
+            mode: "ui",
+            status: "backlog",
+            attachmentPaths: ["/tmp/a.png"]
+        ))
+        let restored = TabshNewDraft().current
+        XCTAssertEqual(restored?.prompt, "fix the flaky test")
+        XCTAssertEqual(restored?.folder, "/Users/me/code")
+        XCTAssertEqual(restored?.providerName, "Cursor")
+        XCTAssertEqual(restored?.modelID, "gpt")
+        XCTAssertEqual(restored?.modelName, "GPT")
+        XCTAssertEqual(restored?.agentModeID, "agent")
+        XCTAssertEqual(restored?.mode, "ui")
+        XCTAssertEqual(restored?.status, "backlog")
+        XCTAssertEqual(restored?.attachmentPaths, ["/tmp/a.png"])
+
+        drafts.clear()
+        XCTAssertNil(TabshNewDraft().current)
+    }
+
+    /// A file attached before the tab closed may be gone when it opens
+    /// again; only paths that still resolve become chips.
+    @MainActor
+    func testANewAgentDraftDropsAttachmentsThatVanished() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tabsh-new-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let kept = folder.appendingPathComponent("kept.txt")
+        try Data("hi".utf8).write(to: kept)
+
+        let chips = TabshNewDraft.attachments(from: [
+            kept.path,
+            folder.appendingPathComponent("gone.txt").path,
+        ])
+        XCTAssertEqual(chips.map(\.url.path), [kept.path])
+    }
+
     /// Uploads are saved beside the daemon's database, under Application
     /// Support, so the path a sent message carries has a space in it. The
     /// bubble has to read that line as the picture rather than repeat it as
@@ -199,5 +254,67 @@ final class TabshAgentTests: XCTestCase {
         XCTAssertFalse(TabshChat.canDrain(open: false, posting: true, pending: 0, queued: 1))
         XCTAssertFalse(TabshChat.canDrain(open: false, posting: false, pending: 1, queued: 1))
         XCTAssertFalse(TabshChat.canDrain(open: false, posting: false, pending: 0, queued: 0))
+    }
+
+    /// A chat draft's files and pictures wait with its words: switching to
+    /// another tab builds the composer again, and the chips have to come
+    /// back with the half-written message.
+    @MainActor
+    func testAChatDraftKeepsItsFilesAndPictures() throws {
+        let session = "s-files-\(UUID().uuidString)"
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tabsh-draft-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer {
+            TabshDrafts().set("", for: session)
+            TabshDrafts().setAttachments([], for: session)
+            try? FileManager.default.removeItem(at: folder)
+        }
+        let picture = folder.appendingPathComponent("shot.png")
+        let note = folder.appendingPathComponent("notes.txt")
+        try Data([0x89, 0x50, 0x4e, 0x47]).write(to: picture)
+        try Data("hi".utf8).write(to: note)
+
+        let drafts = TabshDrafts()
+        drafts.set("look at these", for: session)
+        drafts.setAttachments([
+            TabshPendingAttachment(url: picture),
+            TabshPendingAttachment(url: note),
+        ], for: session)
+
+        let restored = TabshDrafts()
+        XCTAssertEqual(restored.text(for: session), "look at these")
+        XCTAssertEqual(restored.attachments(for: session).map(\.url.path),
+                       [picture.path, note.path])
+
+        // Sent, or the chips taken off one by one: nothing waits for the
+        // next build of the composer.
+        restored.setAttachments([], for: session)
+        XCTAssertTrue(TabshDrafts().attachments(for: session).isEmpty)
+        XCTAssertEqual(restored.text(for: session), "look at these",
+                       "the words stay, the files leave")
+    }
+
+    /// A file attached before the tab closed may be gone when it comes back;
+    /// only chips that can actually be sent are restored.
+    @MainActor
+    func testAChatDraftDropsFilesThatVanished() throws {
+        let session = "s-gone-\(UUID().uuidString)"
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tabsh-draft-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer {
+            TabshDrafts().setAttachments([], for: session)
+            try? FileManager.default.removeItem(at: folder)
+        }
+        let kept = folder.appendingPathComponent("kept.txt")
+        try Data("hi".utf8).write(to: kept)
+
+        let drafts = TabshDrafts()
+        drafts.setAttachments([
+            TabshPendingAttachment(url: kept),
+            TabshPendingAttachment(url: folder.appendingPathComponent("gone.txt")),
+        ], for: session)
+        XCTAssertEqual(TabshDrafts().attachments(for: session).map(\.url.path), [kept.path])
     }
 }

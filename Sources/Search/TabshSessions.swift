@@ -1235,6 +1235,7 @@ final class TabshSessions: ObservableObject {
         TabshTerminals.shared.close(id)
         TabshChats.shared.close(id)
         TabshDrafts.shared.set("", for: id)
+        TabshDrafts.shared.setAttachments([], for: id)
     }
 
     /// At launch: read the cards already on the daemon, then follow the

@@ -6,16 +6,103 @@ import UniformTypeIdentifiers
 // Uses the same composer card as agent chat (TabshComposerField, discs,
 // Superellipse) with New Agent chips under the field. Files dropped or
 // pasted attach as chips and are uploaded with the prompt (see TabshDrop).
+
+/// What New Agent was holding before create. The page is built again whenever
+/// its tab comes back (and after a restart), so a half-written prompt, the
+/// attached files, the folder and the chips have to wait somewhere that
+/// outlives the view — and leave once the card is made.
+@MainActor
+final class TabshNewDraft {
+    static let shared = TabshNewDraft()
+
+    private static let key = "tabshNewDraft"
+    private let store = Store.settings
+
+    struct Snapshot: Equatable {
+        var prompt: String = ""
+        var folder: String = ""
+        var providerName: String = ""
+        var modelID: String?
+        var modelName: String?
+        var agentModeID: String?
+        var mode: String = "tui"
+        var status: String = "in_progress"
+        var attachmentPaths: [String] = []
+    }
+
+    private var snapshot: Snapshot?
+
+    init() {
+        snapshot = Self.read(from: store)
+    }
+
+    var current: Snapshot? { snapshot }
+
+    func save(_ next: Snapshot) {
+        guard snapshot != next else { return }
+        snapshot = next
+        store.set(Self.encode(next), forKey: Self.key)
+    }
+
+    /// A card made, or the form emptied on purpose: the key goes, so the next
+    /// New Agent opens onto settings and recent folders rather than a ghost.
+    func clear() {
+        guard snapshot != nil else { return }
+        snapshot = nil
+        store.removeObject(forKey: Self.key)
+    }
+
+    /// Attachment chips whose files are still on disk. A path that vanished
+    /// between closing the tab and opening it again is dropped quietly.
+    static func attachments(from paths: [String]) -> [TabshPendingAttachment] {
+        paths.compactMap { path in
+            let url = URL(fileURLWithPath: path)
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return TabshPendingAttachment(url: url)
+        }
+    }
+
+    private static func encode(_ snapshot: Snapshot) -> [String: Any] {
+        var dict: [String: Any] = [
+            "prompt": snapshot.prompt,
+            "folder": snapshot.folder,
+            "providerName": snapshot.providerName,
+            "mode": snapshot.mode,
+            "status": snapshot.status,
+            "attachmentPaths": snapshot.attachmentPaths,
+        ]
+        if let modelID = snapshot.modelID { dict["modelID"] = modelID }
+        if let modelName = snapshot.modelName { dict["modelName"] = modelName }
+        if let agentModeID = snapshot.agentModeID { dict["agentModeID"] = agentModeID }
+        return dict
+    }
+
+    private static func read(from store: UserDefaults) -> Snapshot? {
+        guard let dict = store.dictionary(forKey: key) else { return nil }
+        return Snapshot(
+            prompt: dict["prompt"] as? String ?? "",
+            folder: dict["folder"] as? String ?? "",
+            providerName: dict["providerName"] as? String ?? "",
+            modelID: dict["modelID"] as? String,
+            modelName: dict["modelName"] as? String,
+            agentModeID: dict["agentModeID"] as? String,
+            mode: dict["mode"] as? String ?? "tui",
+            status: dict["status"] as? String ?? "in_progress",
+            attachmentPaths: dict["attachmentPaths"] as? [String] ?? []
+        )
+    }
+}
+
 struct AgentComposer: View {
     @ObservedObject var browser: Browser
     @ObservedObject private var directory = TabshModels.shared
 
     @State private var settings: Tabsh.Settings?
-    @State private var folder = FileManager.default.homeDirectoryForCurrentUser.path
-    @State private var providerName = ""
-    @State private var mode = "tui"
-    @State private var status = "in_progress"
-    @State private var prompt = ""
+    @State private var folder: String
+    @State private var providerName: String
+    @State private var mode: String
+    @State private var status: String
+    @State private var prompt: String
     @State private var modelID: String?
     @State private var modelName: String?
     @State private var agentModeID: String?
@@ -24,7 +111,7 @@ struct AgentComposer: View {
     @State private var modeOpen = false
     @State private var creating = false
     @State private var failure: String?
-    @State private var attachments: [TabshPendingAttachment] = []
+    @State private var attachments: [TabshPendingAttachment]
     @State private var droppingFiles = false
     @State private var composerHeight: CGFloat = 32
     @State private var focusToken = 0
@@ -32,7 +119,32 @@ struct AgentComposer: View {
     @State private var filesOpen = false
     /// `/` lists project and personal Cursor skills.
     @State private var skillsOpen = false
+    /// After the first settings load, every edit is kept. Writes during that
+    /// load would freeze a half-filled draft before recent folders arrive.
+    @State private var readyToRemember = false
+    /// True when the form opened onto a saved draft, so load() does not
+    /// overwrite the folder, mode and model the person already chose.
+    private let restoredFromDraft: Bool
     @ObservedObject private var dictation = Dictation.shared
+
+    init(browser: Browser) {
+        _browser = ObservedObject(wrappedValue: browser)
+        let draft = TabshNewDraft.shared.current
+        restoredFromDraft = draft != nil
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        _folder = State(initialValue: {
+            if let path = draft?.folder, !path.isEmpty { return path }
+            return home
+        }())
+        _providerName = State(initialValue: draft?.providerName ?? "")
+        _mode = State(initialValue: draft?.mode ?? "tui")
+        _status = State(initialValue: draft?.status ?? "in_progress")
+        _prompt = State(initialValue: draft?.prompt ?? "")
+        _modelID = State(initialValue: draft?.modelID)
+        _modelName = State(initialValue: draft?.modelName)
+        _agentModeID = State(initialValue: draft?.agentModeID)
+        _attachments = State(initialValue: TabshNewDraft.attachments(from: draft?.attachmentPaths ?? []))
+    }
 
     private var home: String { FileManager.default.homeDirectoryForCurrentUser.path }
     private var recentFolders: [String] {
@@ -200,8 +312,41 @@ struct AgentComposer: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task { await load() }
+        .task {
+            await load()
+            readyToRemember = true
+        }
         .onAppear { focusToken += 1 }
+        // Every edit is kept: the store writes through UserDefaults, which
+        // holds it in memory and flushes on its own — same as a chat draft.
+        .onChange(of: prompt) { _, _ in remember() }
+        .onChange(of: folder) { _, _ in remember() }
+        .onChange(of: providerName) { _, _ in remember() }
+        .onChange(of: modelID) { _, _ in remember() }
+        .onChange(of: modelName) { _, _ in remember() }
+        .onChange(of: agentModeID) { _, _ in remember() }
+        .onChange(of: mode) { _, _ in remember() }
+        .onChange(of: status) { _, _ in remember() }
+        .onChange(of: attachments) { _, _ in remember() }
+    }
+
+    /// Keeps the form for the next time this page is built. Skipped until
+    /// settings have landed, so a first open still gets recent folders, and
+    /// while create is in flight, so clearing the draft after a card is made
+    /// is not rewritten by the empty field.
+    private func remember() {
+        guard readyToRemember, !creating else { return }
+        TabshNewDraft.shared.save(TabshNewDraft.Snapshot(
+            prompt: prompt,
+            folder: folder,
+            providerName: providerName,
+            modelID: modelID,
+            modelName: modelName,
+            agentModeID: agentModeID,
+            mode: mode,
+            status: status,
+            attachmentPaths: attachments.map(\.url.path)
+        ))
     }
 
     private var attachmentBar: some View {
@@ -448,13 +593,17 @@ struct AgentComposer: View {
             if providerName.isEmpty {
                 providerName = settings.agentProvider ?? list.first?.name ?? ""
             }
-            if let saved = settings.agentMode, saved == "ui" || saved == "tui" {
-                mode = saved
-            }
-            // Prefer a folder a card already used, as the web New card does,
-            // rather than always starting from home.
-            if folder == home, let recent = recentFolders.first {
-                folder = recent
+            // A restored draft already chose its mode and folder; only fill
+            // those from settings / recent cards when the form is fresh.
+            if !restoredFromDraft {
+                if let saved = settings.agentMode, saved == "ui" || saved == "tui" {
+                    mode = saved
+                }
+                // Prefer a folder a card already used, as the web New card does,
+                // rather than always starting from home.
+                if folder == home, let recent = recentFolders.first {
+                    folder = recent
+                }
             }
             await directory.refresh(providers: list)
         } catch {
@@ -495,6 +644,10 @@ struct AgentComposer: View {
                                                           status: status)
                 }
                 attachments.removeAll()
+                prompt = ""
+                // The card is made: nothing of this draft should greet the
+                // next New Agent.
+                TabshNewDraft.shared.clear()
                 // A card made from a composer opened in a group joins that
                 // group, as a file opened from the terminal's explorer does.
                 // Read from the composer's own tab: it may not be the one in
