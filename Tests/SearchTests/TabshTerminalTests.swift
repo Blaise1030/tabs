@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import Search
 
@@ -52,5 +53,30 @@ final class TabshTerminalTests: XCTestCase {
         let url = try XCTUnwrap(Tabsh.socketURL(session: "abc-1", token: "t"))
         let parts = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
         XCTAssertNil(parts.queryItems?.first { $0.name == "resume" })
+    }
+
+    /// The standard theme is the window's own ground and ink. The palette's
+    /// greys are dynamic and SwiftTerm resolves them as it is handed the
+    /// colour, so they must be resolved for the pane's appearance first —
+    /// otherwise a dark browser's terminal was drawn on the light ground.
+    func testTheStandardTerminalFollowsTheWindowsAppearance() {
+        let dark = TerminalThemeName.standard.colours(dark: true)
+        // Read as the light appearance would: a resolved dark colour stays
+        // dark, while the raw palette colour would turn white.
+        XCTAssertLessThan(luminance(dark.background, as: .aqua), 0.5, "a dark window's terminal is dark")
+        XCTAssertGreaterThan(luminance(dark.foreground, as: .aqua), 0.5, "and its ink is light")
+
+        let light = TerminalThemeName.standard.colours(dark: false)
+        XCTAssertGreaterThan(luminance(light.background, as: .darkAqua), 0.5, "a light window's terminal is light")
+        XCTAssertLessThan(luminance(light.foreground, as: .darkAqua), 0.5, "and its ink is dark")
+    }
+
+    private func luminance(_ colour: NSColor, as appearance: NSAppearance.Name) -> CGFloat {
+        var resolved = colour
+        NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance {
+            resolved = colour.usingColorSpace(.sRGB) ?? colour
+        }
+        guard let rgb = resolved.usingColorSpace(.sRGB) else { return 1 }
+        return 0.2126 * rgb.redComponent + 0.7152 * rgb.greenComponent + 0.0722 * rgb.blueComponent
     }
 }

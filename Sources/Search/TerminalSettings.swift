@@ -27,8 +27,14 @@ enum TerminalThemeName: String, CaseIterable, Identifiable {
     func colours(dark: Bool) -> TerminalColours {
         switch self {
         case .standard:
-            return TerminalColours(background: Palette.NS.ground,
-                                   foreground: Palette.NS.ink,
+            // The palette's greys are dynamic — one value for a light window,
+            // one for a dark — and SwiftTerm reads their sRGB components as
+            // they are handed over. Outside a drawing pass that happens under
+            // the Mac's appearance, not the window's, so a dark browser got
+            // the light ground. Resolve them against the appearance the pane
+            // is actually drawn in first.
+            return TerminalColours(background: Palette.NS.ground.resolved(dark: dark),
+                                   foreground: Palette.NS.ink.resolved(dark: dark),
                                    caret: dark ? NSColor(hex: 0x8CC4F8) : NSColor(hex: 0x1A5CC2))
         case .solarized:
             return dark
@@ -344,5 +350,19 @@ private extension NSColor {
                   green: CGFloat((hex >> 8) & 0xFF) / 255,
                   blue: CGFloat(hex & 0xFF) / 255,
                   alpha: 1)
+    }
+
+    /// This colour as it looks in a light or dark pane. A dynamic palette
+    /// colour (see Palette.NS) picks its value from the appearance it is
+    /// resolved in; NSAppearance.current outside a drawing pass is the Mac's,
+    /// not the window's, so SwiftTerm's immediate `usingColorSpace` read the
+    /// light value in a dark browser. Resolve it here instead.
+    func resolved(dark: Bool) -> NSColor {
+        guard let appearance = NSAppearance(named: dark ? .darkAqua : .aqua) else { return self }
+        var out = self
+        appearance.performAsCurrentDrawingAppearance {
+            out = self.usingColorSpace(.sRGB) ?? self
+        }
+        return out
     }
 }

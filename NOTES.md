@@ -1,5 +1,7 @@
 Agent chats stay where you put them. While an agent is writing, scrolling back to read earlier messages no longer pulls the conversation down to the newest line on every word; it follows again when you return to the bottom.
 
+The terminal's Standard theme now takes the window's own light or dark ground, instead of the Mac's: a dark browser gets a dark shell.
+
 Under-the-hood update: refreshed the libraries behind the bundled daemon and the site, including a fix for a file-descriptor safety issue in the daemon's IO runtime. Nothing changes in the interface.
 
 Skills in the composer, and a steadier agent chat. Type / to pick a Cursor skill from the project or ~/.cursor/skills; the menu floats full-width above the field without shifting the layout. Fixed: agent transcripts that stayed blank after a restart, and freezes when typing or stopping a run.
