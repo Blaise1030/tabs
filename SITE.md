@@ -71,7 +71,7 @@ tab strip you already use. WebKit, [X] megabytes, free for macOS 14 or later.
 
 [ Download for macOS ]   [ The numbers ↓ ]
 
-Version 1.1.2 · 12.1 MB · Free · Intel Mac?
+Version 1.1.3 · 12.1 MB · Free · Intel Mac?
 ```
 
 Rules:
