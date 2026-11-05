@@ -1,6 +1,6 @@
 # Vendored daemon (Tabs API daemon + tabsctl)
 
-Stripped fork of [Blaise1030/tabsh](https://github.com/Blaise1030/tabsh) **v1.8.2**
+Stripped fork of [Blaise1030/tabsh](https://github.com/Blaise1030/tabsh) **v1.8.3**
 for bundling inside Tabs. Only what the native browser needs.
 
 **Kept:** sessions/PTY/WS, board + hooks (`tabsh status` / `setup`), ACP chat,
