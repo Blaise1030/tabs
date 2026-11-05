@@ -300,6 +300,11 @@ struct TabshChatRow: Identifiable, Equatable {
     var children: [TabshChatRow] = []
     /// "Delivered" under the newest outgoing bubble, as a message shows it.
     var receipt = ""
+    /// True while this agent bubble is still growing from the stream. The
+    /// row draws plain text then, and only parses markdown once the turn
+    /// settles — re-parsing the whole bubble on every token was the costly
+    /// part of a long answer.
+    var streaming = false
 }
 
 @MainActor
@@ -459,6 +464,10 @@ final class TabshChat: ObservableObject {
     /// Ends `loadingHistory` once the replay has been quiet for a beat.
     private var historyIdle: Task<Void, Never>?
     private var stopped = false
+    /// Text deltas folded into the last agent chunk since the last paint.
+    /// Drained by `schedulePatch` so a fast stream does not walk the whole
+    /// transcript on every token — only the growing bubble is updated.
+    private var agentDelta = ""
 
     init(sessionID: String) {
         self.sessionID = sessionID
@@ -758,10 +767,12 @@ final class TabshChat: ObservableObject {
         // Fold consecutive token/thought deltas into one chunk so a long
         // replay is hundreds of entries rather than tens of thousands —
         // rebuild walks stay cheap enough for the main thread.
+        var folded = false
         if let last = chunks.last,
            (chunk.type == "text_delta" || chunk.type == "thought_delta"),
            last.type == chunk.type {
             chunks[chunks.count - 1].text += chunk.text
+            folded = true
         } else {
             chunks.append(chunk)
         }
@@ -775,7 +786,17 @@ final class TabshChat: ObservableObject {
             // Hold the row list still until the history burst pauses, then
             // paint once and unpin the loading flag.
             noteHistoryChunk()
+        } else if folded, chunk.type == "text_delta", !chunk.text.isEmpty {
+            // The common path while the agent writes: grow the last bubble
+            // without rebuilding every earlier row.
+            agentDelta += chunk.text
+            schedulePatch()
         } else {
+            // A tool, permission, turn end, or a new bubble: drop any pending
+            // patch so it cannot paint only the last text and miss this row.
+            agentDelta = ""
+            refresh?.cancel()
+            refresh = nil
             schedule()
         }
     }
@@ -809,7 +830,43 @@ final class TabshChat: ObservableObject {
         }
     }
 
+    /// Same cadence as `schedule`, but only syncs the growing agent bubble
+    /// from the folded chunk. Falls back to a full rebuild when the list
+    /// has no agent row yet (the first token of a turn).
+    private func schedulePatch() {
+        guard refresh == nil else { return }
+        refresh = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.refresh = nil
+            if !self.patchLastAgent() {
+                self.rebuild()
+            }
+        }
+    }
+
+    /// Copies the folded text_delta onto the last agent row. Returns false
+    /// when the list still needs a full rebuild (no agent bubble to grow).
+    @discardableResult
+    private func patchLastAgent() -> Bool {
+        agentDelta = ""
+        guard let last = chunks.last, last.type == "text_delta",
+              let index = rows.lastIndex(where: { $0.kind == .agent })
+        else { return false }
+        var next = rows
+        if next[index].text != last.text || !next[index].streaming {
+            next[index].text = last.text
+            next[index].streaming = true
+            rows = next
+        }
+        // Tokens mean the agent has started answering.
+        if !busy { busy = true }
+        if waiting { waiting = false }
+        return true
+    }
+
     private func rebuild() {
+        agentDelta = ""
         let answered = Set(chunks.compactMap {
             $0.type == "permission_answered" ? $0.requestID : nil
         })
@@ -930,6 +987,12 @@ final class TabshChat: ObservableObject {
             } else {
                 rows[last].receipt = "Delivered"
             }
+        }
+
+        // The bubble still receiving tokens draws as plain text; settled
+        // ones keep full markdown. Only the open turn's last agent row.
+        if open, let last = rows.lastIndex(where: { $0.kind == .agent }) {
+            rows[last].streaming = true
         }
 
         let nextRows = TabshChat.grouped(rows)
@@ -1058,7 +1121,10 @@ struct TabshAgentPane: View {
                                     }
                             }
                             ForEach(Array(displayedRows.enumerated()), id: \.element.id) { index, row in
+                                // Equatable: a streamed token only redraws the
+                                // growing bubble, not every earlier message.
                                 TabshChatRowView(row: row, chat: chat)
+                                    .equatable()
                                     .id(row.id)
                                     .padding(.top, gap(before: index, in: displayedRows))
                             }
@@ -2448,7 +2514,7 @@ enum ComposerDisc {
 
 // MARK: - Rows
 
-private struct TabshChatRowView: View {
+private struct TabshChatRowView: View, Equatable {
     let row: TabshChatRow
     /// Not `@ObservedObject`: busy/waiting flips on stop must not rebuild
     /// every bubble. Approve/answer only need a reference to call into.
@@ -2457,6 +2523,11 @@ private struct TabshChatRowView: View {
     @Environment(\.colorScheme) private var scheme
     @State private var unfolded = false
     @State private var answered = false
+
+    /// The chat handle is identity for actions; what is drawn is the row.
+    static func == (lhs: TabshChatRowView, rhs: TabshChatRowView) -> Bool {
+        lhs.row == rhs.row
+    }
 
     @ViewBuilder
     var body: some View {
@@ -2531,14 +2602,27 @@ private struct TabshChatRowView: View {
         return HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 if !body.isEmpty {
-                    TabshMarkdownBubble(text: body, color: Palette.ink)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 9)
-                        .background(
-                            RoundedRectangle(cornerRadius: 17, style: .continuous)
-                                .fill(agentBubble)
-                        )
-                        .frame(maxWidth: 720, alignment: .leading)
+                    // While tokens arrive, skip markdown parsing: AttributedString
+                    // and the block parser on every delta were the expensive part
+                    // of a long answer. Settled rows keep the full bubble.
+                    Group {
+                        if row.streaming {
+                            Text(body)
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(Palette.ink)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            TabshMarkdownBubble(text: body, color: Palette.ink)
+                        }
+                    }
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 9)
+                    .background(
+                        RoundedRectangle(cornerRadius: 17, style: .continuous)
+                            .fill(agentBubble)
+                    )
+                    .frame(maxWidth: 720, alignment: .leading)
                 }
 
                 ForEach(imageRefs(in: row.text), id: \.self) { url in
