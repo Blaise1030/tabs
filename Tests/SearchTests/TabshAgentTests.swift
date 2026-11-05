@@ -256,6 +256,19 @@ final class TabshAgentTests: XCTestCase {
         XCTAssertFalse(TabshChat.canDrain(open: false, posting: false, pending: 0, queued: 0))
     }
 
+    /// A growing agent bubble flips `streaming` so the list can redraw only
+    /// that row (and skip markdown) while tokens arrive; a settled copy of
+    /// the same words is a different row for Equatable.
+    func testAStreamingAgentRowIsDistinctFromItsSettledCopy() {
+        var live = TabshChatRow(id: "agent-1", kind: .agent, text: "Hello")
+        live.streaming = true
+        var settled = live
+        settled.streaming = false
+        XCTAssertNotEqual(live, settled)
+        settled.streaming = true
+        XCTAssertEqual(live, settled)
+    }
+
     /// A chat draft's files and pictures wait with its words: switching to
     /// another tab builds the composer again, and the chips have to come
     /// back with the half-written message.

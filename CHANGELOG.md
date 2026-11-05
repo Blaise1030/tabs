@@ -22,6 +22,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- An agent chat that is still writing no longer rebuilds every earlier bubble on each token: only the growing answer updates, as plain text until the turn settles, then markdown. Long answers stay responsive instead of beachballing the tab.
 - Typing in the address field, finding in a page and swiping between spaces no longer redraw every tab. Tab rows and the History menu update when what they show changes. Thanks [@oddharsh](https://github.com/oddharsh) ([#742](https://github.com/driceroland/Search/pull/742))
 - With the floating video set to Picture in picture (Settings › General), the button at the top right of the video's little window takes you back to it: Search comes forward on the video's tab and the video goes back into its page. It did nothing when that tab was behind another one or behind another app, which is how it nearly always got there, because macOS puts a video back only into a page that is on screen
 - A video filling the screen can be clicked again once paused: clicking it, or its play button, plays it again, as the space bar did. The view macOS lays over a paused video to pick out its text and subject took every click, and is now kept out of the way while the video fills the screen
