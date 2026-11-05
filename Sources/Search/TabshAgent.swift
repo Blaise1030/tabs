@@ -1054,6 +1054,16 @@ struct TabshAgentPane: View {
                     .padding(.horizontal, 36)
                     .padding(.top, 14)
                     .padding(.bottom, 14)
+                    // The bottom marker cannot tell a token growing the list
+                    // from the reader scrolling up: both push it down. The
+                    // scroll view's own offset can, and it is what unpins the
+                    // follow while the agent is still writing.
+                    .background {
+                        ChatScrollWatch {
+                            guard !settlingScroll, !chat.loadingHistory, pinned else { return }
+                            pinned = false
+                        }
+                    }
                 }
                 // The list slides into the bar above and the composer
                 // below: a hard edge cut the text off mid-line, so each end
@@ -2224,6 +2234,126 @@ private struct ChatTopKey: PreferenceKey {
     static var defaultValue: CGFloat = -.greatestFiniteMagnitude
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+/// Tracks the transcript scroll view's clip offset between its bounds
+/// notifications, and says when a change is the reader going back up the
+/// conversation.
+///
+/// A precise trackpad moves the clip in fractions of a point, so a slow
+/// scroll is added up over notifications rather than reset by each one. A
+/// resize is not a scroll even though the reflow can move the clip.
+struct ChatScrollTravel {
+    private var last: CGFloat?
+    private var size: NSSize?
+
+    /// Feed each clip-bounds change. True means upward travel far enough to
+    /// count: the reader has taken the list from the agent.
+    mutating func moved(to y: CGFloat, in size: NSSize) -> Bool {
+        let resized = self.size.map { $0 != size } ?? false
+        self.size = size
+        guard !resized, let last else {
+            self.last = y
+            return false
+        }
+        if y < last - 0.5 {
+            // Up the conversation: the content slid down, so the clip's
+            // origin went back towards zero.
+            self.last = y
+            return true
+        }
+        if y > last + 0.5 {
+            // Down towards the newest line. Track it so an earlier run of
+            // upward travel does not count later.
+            self.last = y
+        }
+        // Either side within half a point: leave `last` where it is, so a
+        // slow scroll adds up.
+        return false
+    }
+}
+
+/// Hears the transcript's own scroll view when the reader moves the list up.
+///
+/// The bottom marker alone cannot tell the two ways it travels: a streamed
+/// token grows the list under a pinned viewport and a hand scrolling back
+/// through the conversation both push the marker down. While the agent is
+/// busy the pane therefore used to chase the marker and pull itself back to
+/// the newest line on every token, so past messages could not be read until
+/// the turn ended. The scroll view's offset is the difference: a token never
+/// moves it, and a reader going up is the only thing that moves it towards
+/// the start. Our own `scrollTo` only ever goes the other way.
+///
+/// It sits as a background inside the content, never in front of it: the
+/// watch view takes no click, no selection and no scroll.
+private struct ChatScrollWatch: NSViewRepresentable {
+    let onScrollUp: () -> Void
+
+    func makeNSView(context: Context) -> WatchView {
+        let view = WatchView()
+        view.onScrollUp = onScrollUp
+        return view
+    }
+
+    func updateNSView(_ view: WatchView, context: Context) {
+        view.onScrollUp = onScrollUp
+    }
+
+    final class WatchView: NSView {
+        var onScrollUp: (() -> Void)?
+
+        private weak var watched: NSScrollView?
+        private var boundsObserver: NSObjectProtocol?
+        private var travel = ChatScrollTravel()
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            attach()
+        }
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            attach()
+        }
+
+        deinit {
+            if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
+        }
+
+        /// The nearest scroll view is the transcript. SwiftUI builds the
+        /// background before it is in a window, hence both hooks above.
+        private func attach() {
+            guard let scroll = enclosingScrollView, scroll !== watched else { return }
+            if let boundsObserver {
+                NotificationCenter.default.removeObserver(boundsObserver)
+            }
+            watched = scroll
+            travel = ChatScrollTravel()
+            let bounds = scroll.contentView.bounds
+            _ = travel.moved(to: bounds.origin.y, in: bounds.size)
+            scroll.contentView.postsBoundsChangedNotifications = true
+            boundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scroll.contentView,
+                // Synchronously, on the scroll's own thread (the main one):
+                // the pin has to be dropped before SwiftUI's next layout
+                // pass can read it and chase the newest line.
+                queue: nil
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.moved() }
+            }
+        }
+
+        private func moved() {
+            guard let scroll = watched else { return }
+            let bounds = scroll.contentView.bounds
+            if travel.moved(to: bounds.origin.y, in: bounds.size) {
+                onScrollUp?()
+            }
+        }
     }
 }
 
