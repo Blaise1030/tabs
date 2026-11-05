@@ -1,3 +1,5 @@
+Faster chrome, quieter agent chat. Typing in the address field and find-in-page no longer redraw every tab on every keystroke, and while an agent streams, only the growing reply updates — the rest of the transcript stays still.
+
 Agent chats stay where you put them. While an agent is writing, scrolling back to read earlier messages no longer pulls the conversation down to the newest line on every word; it follows again when you return to the bottom.
 
 The terminal's Standard theme now takes the window's own light or dark ground, instead of the Mac's: a dark browser gets a dark shell.
