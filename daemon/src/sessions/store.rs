@@ -2,7 +2,7 @@
 
 use super::{Session, SessionInfo, pty::process_cwd};
 use crate::{AppState, error::BoxError};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
@@ -253,12 +253,15 @@ pub(crate) fn insert_card(db: &Connection, card: &NewCard) -> rusqlite::Result<S
             format!("Terminal {n}")
         }
     };
+    let session_token = crate::auth::random_hex(32).map_err(|e| {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+    })?;
     db.execute(
         "INSERT INTO sessions (id, name, position, cwd, status, status_at, pending_input, pending_prompt,
                                 pending_command, pinned, resume_command, agent_session, resume_input, parent, mode,
-                                acp_command)
+                                acp_command, session_token)
          VALUES (?1, ?2, (SELECT COALESCE(MAX(position), 0) + 1 FROM sessions), ?3, ?4, unixepoch(), ?5, ?6,
-                 ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                 ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             id,
             name,
@@ -273,10 +276,57 @@ pub(crate) fn insert_card(db: &Connection, card: &NewCard) -> rusqlite::Result<S
             card.resume_input,
             card.parent,
             card.mode,
-            card.acp_command
+            card.acp_command,
+            session_token,
         ],
     )?;
     Ok(info(db, &id)?.expect("just inserted"))
+}
+
+/// The card that minted `token`, if any.
+pub(crate) fn session_id_for_token(db: &Connection, token: &str) -> Option<String> {
+    if token.len() < 32 {
+        return None;
+    }
+    db.query_row(
+        "SELECT id FROM sessions WHERE session_token = ?1",
+        [token],
+        |r| r.get(0),
+    )
+    .ok()
+}
+
+/// The card's own bearer token, minting one if an older row still lacks it.
+pub(crate) fn ensure_session_token(db: &Connection, id: &str) -> rusqlite::Result<String> {
+    let existing: Option<String> = db
+        .query_row(
+            "SELECT session_token FROM sessions WHERE id = ?1",
+            [id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten()
+        .filter(|t| t.len() >= 32);
+    if let Some(token) = existing {
+        return Ok(token);
+    }
+    let token = crate::auth::random_hex(32).map_err(|e| {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+    })?;
+    let updated = db.execute(
+        "UPDATE sessions SET session_token = ?1
+         WHERE id = ?2 AND (session_token IS NULL OR length(session_token) < 32)",
+        params![token, id],
+    )?;
+    if updated == 1 {
+        return Ok(token);
+    }
+    // Another starter won the race, or the card is gone.
+    db.query_row(
+        "SELECT session_token FROM sessions WHERE id = ?1",
+        [id],
+        |r| r.get(0),
+    )
 }
 
 /// Sets the tab order: `ids` first, in that order, then any other sessions in

@@ -90,10 +90,11 @@ final class TabshDaemon {
         on Tabs. Also add this to the same persistent instructions the guide \
         has you write: inside a Tabs session, `tabsctl` is on PATH — create a \
         sibling session with `tabsctl new --agent --prompt '<task>'` or \
-        `tabsctl new --terminal`, list sessions with `tabsctl sessions`, and \
-        reopen one with `tabsctl open <id>`; do not create sessions by \
-        calling the tabsh daemon's API directly. Verify it once with \
-        `tabsctl sessions` and say in your report that you did.
+        `tabsctl new --terminal` (Tabs asks before a new card opens), list \
+        sessions with `tabsctl sessions`, and reopen one with \
+        `tabsctl open <id>`; do not create sessions by calling the tabsh \
+        daemon's API directly. Verify it once with `tabsctl sessions` and \
+        say in your report that you did.
         """
         .replacingOccurrences(of: "\n", with: " ")
     }

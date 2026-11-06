@@ -99,6 +99,12 @@ fn run(args: Vec<String>) -> Result<(), Failure> {
                 }
             }
             if options.card_only {
+                if !parent.is_empty() {
+                    return Err(fail(
+                        1,
+                        "inside a Tabs session, omit --card-only so Tabs can ask before creating",
+                    ));
+                }
                 print_answer(create_card_only(&kind, &options)?, &options);
                 return Ok(());
             }
@@ -290,6 +296,14 @@ fn daemon_base() -> String {
 }
 
 fn daemon_token() -> Option<String> {
+    // Inside a card: never open the pairing token file. Session tokens are
+    // not accepted for create/list HTTP calls; callers must use the socket.
+    if env::var("TABSH_SESSION_ID")
+        .ok()
+        .is_some_and(|s| !s.is_empty())
+    {
+        return None;
+    }
     let mut candidates = Vec::new();
     if let Ok(db) = env::var("TABSH_DB") {
         if !db.is_empty() {

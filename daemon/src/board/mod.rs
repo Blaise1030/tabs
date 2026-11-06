@@ -704,6 +704,10 @@ pub(crate) fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             "acp_command",
             "ALTER TABLE sessions ADD COLUMN acp_command TEXT",
         ),
+        (
+            "session_token",
+            "ALTER TABLE sessions ADD COLUMN session_token TEXT",
+        ),
     ] {
         if !cols.iter().any(|c| c == name) {
             conn.execute(ddl, [])?;
@@ -712,6 +716,12 @@ pub(crate) fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE sessions SET status_at = unixepoch() WHERE status_at = 0",
         [],
+    )?;
+    // One token per card: shells and ACP children present it instead of the
+    // pairing token. Unique when set; several NULL rows are fine until mint.
+    conn.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS sessions_session_token
+         ON sessions(session_token) WHERE session_token IS NOT NULL",
     )?;
     Ok(())
 }

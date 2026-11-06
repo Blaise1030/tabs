@@ -61,15 +61,31 @@ pub(super) fn process_cwd(_pid: u32) -> Option<String> {
 /// What every shell gets in its environment: hooks and `tabsh status` read
 /// `TABSH_SESSION_ID` to know which card they belong to. A new card's first
 /// prompt rides along as `TABSH_PROMPT` (the typed line only names it).
+///
+/// `TABSH_SESSION_TOKEN` is that card's own bearer — enough for
+/// `tabsh status`, not the pairing token. `TABSCTL_SOCKET` finds the
+/// browser without pointing at `TABSH_DB` (and the pairing token beside it).
 pub(super) fn shell_env(
     st: &AppState,
     id: &str,
     prompt: Option<&str>,
 ) -> Vec<(&'static str, String)> {
+    let token = {
+        let db = st.db.lock().unwrap_or_else(|e| e.into_inner());
+        crate::sessions::store::ensure_session_token(&db, id).unwrap_or_default()
+    };
+    let socket = std::path::Path::new(st.db_path.as_ref())
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.join("agent.sock"))
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let mut env = vec![
         ("TERM", "xterm-256color".into()),
         ("TABSH_SESSION_ID", id.into()),
         ("TABSH_URL", st.self_url.to_string()),
+        ("TABSH_SESSION_TOKEN", token),
+        ("TABSCTL_SOCKET", socket),
     ];
     if let Some(p) = prompt {
         env.push(("TABSH_PROMPT", p.into()));
@@ -376,6 +392,10 @@ fn spawn_session(
 
     let mut cmd = CommandBuilder::new(shell);
     cmd.arg("-l");
+    // Shells must not inherit the daemon's `TABSH_DB`: that path sits beside
+    // the pairing token, and a coding agent in the card would otherwise
+    // hold full daemon credentials. The card's own session token is enough.
+    cmd.env_remove("TABSH_DB");
     for (k, v) in shell_env(&st, &id, prompt) {
         cmd.env(k, v);
     }
@@ -540,18 +560,32 @@ mod tests {
     #[test]
     fn shells_know_their_card_and_the_daemon() {
         let st = test_state();
-        let env = shell_env(&st, "abc-1", None);
+        let id = crate::sessions::store::insert_session(&st.db.lock().unwrap(), None)
+            .unwrap()
+            .id;
+        let env = shell_env(&st, &id, None);
         assert!(!env.iter().any(|(k, _)| *k == "TABSH_PROMPT"));
         assert!(env.contains(&("TERM", "xterm-256color".into())));
-        assert!(env.contains(&("TABSH_SESSION_ID", "abc-1".into())));
+        assert!(env.contains(&("TABSH_SESSION_ID", id.clone())));
         assert!(env.contains(&("TABSH_URL", "http://127.0.0.1:7681".into())));
+        let token = env
+            .iter()
+            .find(|(k, _)| *k == "TABSH_SESSION_TOKEN")
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("");
+        assert!(token.len() >= 32, "shells get a session token, not the pairing token");
+        assert_ne!(token, st.token.as_ref());
+        assert!(env.iter().any(|(k, _)| *k == "TABSCTL_SOCKET"));
     }
 
     #[test]
     fn a_pending_prompt_reaches_the_shell_verbatim() {
         let st = test_state();
+        let id = crate::sessions::store::insert_session(&st.db.lock().unwrap(), None)
+            .unwrap()
+            .id;
         let p = "it's $(x) `y`\n\"z\"";
-        let env = shell_env(&st, "abc-1", Some(p));
+        let env = shell_env(&st, &id, Some(p));
         assert!(env.contains(&("TABSH_PROMPT", p.into())));
     }
 

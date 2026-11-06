@@ -9,12 +9,28 @@ use std::path::Path;
 /// Who a request's token belongs to.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Credential {
+    /// The browser's pairing token: full daemon API.
     Main,
+    /// A per-card token handed to that card's shell / ACP child: only that
+    /// card's status hook, never settings, create, files, or approvals.
+    Session { id: String },
 }
 
 /// The main bearer token, or nothing.
 pub(crate) fn credential(expected: &str, presented: &str) -> Option<Credential> {
     token_eq(presented, expected).then_some(Credential::Main)
+}
+
+/// Whether this credential may call `method` `path`. Main may call
+/// everything; a session token may only patch its own card status.
+pub(crate) fn allows(credential: &Credential, method: &axum::http::Method, path: &str) -> bool {
+    match credential {
+        Credential::Main => true,
+        Credential::Session { id } => {
+            method == axum::http::Method::PATCH
+                && path == format!("/api/sessions/{id}/status")
+        }
+    }
 }
 
 /// Reads the pairing token from `path`, creating it on first run. It is kept
@@ -263,5 +279,33 @@ mod tests {
         let token = load_or_create_token(&path).unwrap();
         assert_eq!(token.len(), 64);
         assert_eq!(mode(&path), 0o600);
+    }
+
+    #[test]
+    fn a_session_credential_is_limited_to_its_status_route() {
+        let session = Credential::Session {
+            id: "abc-1".into(),
+        };
+        assert!(allows(
+            &session,
+            &axum::http::Method::PATCH,
+            "/api/sessions/abc-1/status"
+        ));
+        assert!(!allows(
+            &session,
+            &axum::http::Method::PATCH,
+            "/api/sessions/other/status"
+        ));
+        assert!(!allows(
+            &session,
+            &axum::http::Method::GET,
+            "/api/sessions/abc-1/status"
+        ));
+        assert!(!allows(&session, &axum::http::Method::POST, "/api/sessions"));
+        assert!(allows(
+            &Credential::Main,
+            &axum::http::Method::POST,
+            "/api/sessions"
+        ));
     }
 }

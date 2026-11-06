@@ -405,11 +405,36 @@ impl ChatManager {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone();
+            let session_token = {
+                let db = self
+                    .inner
+                    .board
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_ref()
+                    .map(|b| {
+                        crate::sessions::store::ensure_session_token(&b.db.lock().unwrap_or_else(|e| e.into_inner()), session_id)
+                    });
+                match db {
+                    Some(Ok(token)) => token,
+                    _ => String::new(),
+                }
+            };
+            let socket = std::path::Path::new(self.inner.data_dir.as_path())
+                .parent()
+                .map(|p| p.join("agent.sock"))
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let client = AcpClient::spawn_with_env(
                 &cmd,
                 &args,
                 cwd,
-                &[("TABSH_SESSION_ID", session_id), ("TABSH_URL", &url)],
+                &[
+                    ("TABSH_SESSION_ID", session_id),
+                    ("TABSH_URL", &url),
+                    ("TABSH_SESSION_TOKEN", &session_token),
+                    ("TABSCTL_SOCKET", &socket),
+                ],
             )
             .await
             .map_err(|e| ChatError::Failed(e.to_string()))?;

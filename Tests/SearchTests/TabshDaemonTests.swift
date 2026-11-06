@@ -32,6 +32,7 @@ final class TabshDaemonTests: XCTestCase {
         XCTAssertTrue(prompt.contains("setup` and follow"))
         XCTAssertTrue(prompt.contains("tabsctl new --agent --prompt '<task>'"))
         XCTAssertTrue(prompt.contains("tabsctl new --terminal"))
+        XCTAssertTrue(prompt.contains("Tabs asks before a new card opens"))
         XCTAssertTrue(prompt.contains("tabsctl sessions"))
         XCTAssertTrue(prompt.contains("tabsctl open <id>"))
         XCTAssertTrue(prompt.contains("do not create sessions by"))

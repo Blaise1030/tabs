@@ -25,18 +25,27 @@ pub(super) struct Env {
 impl Env {
     pub(super) fn from_process() -> Env {
         let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-        // The token sits next to the state database, as the daemon keeps it.
-        let token_path = match var("TABSH_DB") {
-            Some(db) => std::path::Path::new(&db).with_file_name("token"),
-            None => std::path::Path::new(&var("HOME").unwrap_or_else(|| ".".into()))
-                .join(".tabsh/token"),
+        let session = var("TABSH_SESSION_ID");
+        // Inside a card: only that card's session token. Never fall back to
+        // the pairing token on disk — a coding agent in the shell would
+        // otherwise hold full daemon credentials via `tabsh status`.
+        let token = if session.is_some() {
+            var("TABSH_SESSION_TOKEN")
+        } else {
+            let token_path = match var("TABSH_DB") {
+                Some(db) => std::path::Path::new(&db).with_file_name("token"),
+                None => std::path::Path::new(&var("HOME").unwrap_or_else(|| ".".into()))
+                    .join(".tabsh/token"),
+            };
+            std::fs::read_to_string(token_path)
+                .ok()
+                .map(|t| t.trim().to_owned())
+                .filter(|t| !t.is_empty())
         };
         Env {
-            session: var("TABSH_SESSION_ID"),
+            session,
             url: var("TABSH_URL").unwrap_or_else(|| "http://127.0.0.1:7681".into()),
-            token: std::fs::read_to_string(token_path)
-                .ok()
-                .map(|t| t.trim().to_owned()),
+            token,
             agent: (var("CLAUDECODE").as_deref() == Some("1")).then_some("claude"),
             conversation: var("CLAUDE_CODE_SESSION_ID"),
         }

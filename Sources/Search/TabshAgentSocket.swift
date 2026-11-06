@@ -7,12 +7,12 @@ import Foundation
 // opened here, without stealing focus.
 //
 // Separate from the bench on purpose: the bench needs Settings consent
-// because it can eval and click in pages. This socket can only create, list
-// and open tabsh sessions — no more than the daemon API already allows any
-// same-user process holding the token — so it is on without a switch, with
-// the bench's own discipline: a socket only this user can reach (0600),
-// the peer's uid checked again before a word is read, one JSON object per
-// line in, one per line out, one request per connection.
+// because it can eval and click in pages. This socket lists and opens freely
+// for the same user, but create from inside a session (`parent` set) asks
+// once in the UI — a coding agent must not open new cards silently. Socket
+// discipline matches the bench: 0600, peer uid checked before a word is
+// read, one JSON object per line in, one per line out, one request per
+// connection.
 
 /// The verbs `tabsctl` may ask for. The Rust CLI duplicates these strings;
 /// TabsctlContractTests pins the two copies together.
@@ -247,10 +247,24 @@ final class TabshAgentSocket {
                          "cwd": info.cwd as Any, "mode": info.mode as Any]
                     }])
                 case TabsctlProtocol.createTerminal:
+                    guard await Self.confirmSpawn(parent: request.parent, kind: "terminal") else {
+                        answer(TabsctlProtocol.failure(
+                            "denied",
+                            "Tabs did not allow a new terminal",
+                            hint: "an agent inside a session needs you to allow it"))
+                        return
+                    }
                     let session = try await Tabsh.createTerminal(cwd: request.cwd, name: request.name)
                     let tab = browser.show(InternalPage(.tabsh, session.id), focus: request.focus)
                     answer(["session": session.id, "tab": tab.id.uuidString, "focused": request.focus])
                 case TabsctlProtocol.createAgent:
+                    guard await Self.confirmSpawn(parent: request.parent, kind: "agent") else {
+                        answer(TabsctlProtocol.failure(
+                            "denied",
+                            "Tabs did not allow a new agent session",
+                            hint: "an agent inside a session needs you to allow it"))
+                        return
+                    }
                     let session = try await Self.createAgent(request)
                     let kind: InternalPage.Kind = (request.mode ?? "ui") == "ui" ? .agent : .tabsh
                     let tab = browser.show(InternalPage(kind, session.id), focus: request.focus)
@@ -279,6 +293,31 @@ final class TabshAgentSocket {
                 }
             } catch {
                 answer(TabsctlProtocol.failure("failed", error.localizedDescription))
+            }
+        }
+    }
+
+    /// When `tabsctl` runs inside a card (`parent` set), creating another
+    /// card needs a human yes. Outside a session the user typed the command
+    /// themselves. Tests skip the sheet (`Store.testing`).
+    private static func confirmSpawn(parent: String?, kind: String) async -> Bool {
+        guard let parent, !parent.isEmpty else { return true }
+        if Store.testing { return true }
+        return await withCheckedContinuation { cont in
+            let alert = NSAlert()
+            alert.messageText = kind == "agent"
+                ? "Allow a new agent session?"
+                : "Allow a new terminal?"
+            alert.informativeText =
+                "An agent in this session wants to open another card."
+            alert.addButton(withTitle: "Allow")
+            alert.addButton(withTitle: "Don't Allow")
+            guard let window = NSApp.keyWindow ?? NSApp.mainWindow else {
+                cont.resume(returning: alert.runModal() == .alertFirstButtonReturn)
+                return
+            }
+            alert.beginSheetModal(for: window) {
+                cont.resume(returning: $0 == .alertFirstButtonReturn)
             }
         }
     }

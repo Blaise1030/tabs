@@ -30,7 +30,7 @@ pub(crate) async fn guard(
     let Some(ConnectInfo(peer)) = req.extensions().get::<ConnectInfo<SocketAddr>>().copied() else {
         return StatusCode::FORBIDDEN.into_response();
     };
-    let who = presented_token(&req).and_then(|t| auth::credential(&st.token, t));
+    let who = presented_token(&req).and_then(|t| resolve_credential(&st, t));
     if let Some(credential) = &who {
         req.extensions_mut().insert(credential.clone());
     }
@@ -42,6 +42,11 @@ pub(crate) async fn guard(
     let Some(origin) = headers.get(header::ORIGIN).cloned() else {
         if !admits_without_origin(req.method(), path, who.as_ref()) {
             return StatusCode::UNAUTHORIZED.into_response();
+        }
+        if let Some(credential) = &who
+            && !auth::allows(credential, req.method(), path)
+        {
+            return StatusCode::FORBIDDEN.into_response();
         }
         return next.run(req).await;
     };
@@ -76,8 +81,12 @@ pub(crate) async fn guard(
             HeaderValue::from_static("true"),
         );
         res
-    } else if who.is_some() {
-        next.run(req).await
+    } else if let Some(credential) = &who {
+        if !auth::allows(credential, req.method(), path) {
+            StatusCode::FORBIDDEN.into_response()
+        } else {
+            next.run(req).await
+        }
     } else {
         StatusCode::UNAUTHORIZED.into_response()
     };
@@ -85,6 +94,16 @@ pub(crate) async fn guard(
     h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
     h.insert(header::VARY, HeaderValue::from_static("origin"));
     res
+}
+
+/// The pairing token, or a card's own session token from the database.
+fn resolve_credential(st: &AppState, presented: &str) -> Option<Credential> {
+    if let Some(main) = auth::credential(&st.token, presented) {
+        return Some(main);
+    }
+    let db = st.db.lock().unwrap_or_else(|e| e.into_inner());
+    crate::sessions::store::session_id_for_token(&db, presented)
+        .map(|id| Credential::Session { id })
 }
 
 /// Whether a request with no Origin may pass. Only `/` and `/open` are
@@ -258,6 +277,64 @@ mod tests {
         for bad in ["evil.example:7681", "evil.localhost:7681"] {
             assert!(!host(bad), "{bad}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_session_token_may_only_patch_its_own_status() {
+        let st = test_state();
+        let id = crate::sessions::store::insert_session(&st.db.lock().unwrap(), None)
+            .unwrap()
+            .id;
+        let token = crate::sessions::store::ensure_session_token(&st.db.lock().unwrap(), &id)
+            .unwrap();
+        let app = crate::state::router(st.clone());
+
+        let status = Request::builder()
+            .method(Method::PATCH)
+            .uri(format!("/api/sessions/{id}/status"))
+            .header(header::HOST, "127.0.0.1:7681")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .extension(loopback_peer())
+            .body(Body::from(r#"{"status":"completed","note":"ok"}"#))
+            .unwrap();
+        let res = app.clone().oneshot(status).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "own status is allowed");
+
+        let create = Request::builder()
+            .method(Method::POST)
+            .uri("/api/sessions")
+            .header(header::HOST, "127.0.0.1:7681")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .extension(loopback_peer())
+            .body(Body::from("{}"))
+            .unwrap();
+        let res = app.clone().oneshot(create).await.unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN, "create needs the pairing token");
+
+        let settings = Request::builder()
+            .method(Method::GET)
+            .uri("/api/settings")
+            .header(header::HOST, "127.0.0.1:7681")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .extension(loopback_peer())
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(settings).await.unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+        let other = Request::builder()
+            .method(Method::PATCH)
+            .uri("/api/sessions/not-this-card/status")
+            .header(header::HOST, "127.0.0.1:7681")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .extension(loopback_peer())
+            .body(Body::from(r#"{"status":"completed"}"#))
+            .unwrap();
+        let res = app.oneshot(other).await.unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN, "another card's status is refused");
     }
 
     #[test]

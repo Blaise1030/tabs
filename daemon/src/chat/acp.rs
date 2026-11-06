@@ -217,9 +217,10 @@ impl AcpClient {
     }
 
     /// `env` overrides the inherited environment. The manager passes the
-    /// card's `TABSH_SESSION_ID` and this daemon's `TABSH_URL` so a daemon
-    /// started inside a tabsh shell cannot leak that shell's card into
-    /// every agent.
+    /// card's `TABSH_SESSION_ID`, session token and this daemon's `TABSH_URL`
+    /// so a daemon started inside a tabsh shell cannot leak that shell's
+    /// card into every agent — and so the agent never inherits `TABSH_DB`
+    /// (the pairing token lives beside it).
     pub(crate) async fn spawn_with_env(
         cmd: &str,
         args: &[String],
@@ -233,7 +234,8 @@ impl AcpClient {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
-            .kill_on_drop(true);
+            .kill_on_drop(true)
+            .env_remove("TABSH_DB");
         for (key, value) in env {
             command.env(key, value);
         }
