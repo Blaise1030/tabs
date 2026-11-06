@@ -6,7 +6,7 @@ export const SITE_URL = 'https://browser.tabsh.cc';
 export const REPO_URL = 'https://github.com/Blaise1030/tabs';
 export const TABSH_URL = 'https://tabsh.cc';
 
-export const VERSION = '1.1.4';
+export const VERSION = '1.1.5';
 /** Set when a DMG has actually been measured; leave null until then. */
 export const SIZE_MB: number | null = 12.1;
 

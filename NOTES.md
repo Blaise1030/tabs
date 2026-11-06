@@ -1,3 +1,5 @@
+Safer agent terminals. A coding agent in a session gets its own token for updating its card — not the daemon's pairing secret — so it can no longer create sessions, change settings or approve tools through the API on its own. Opening another card with tabsctl asks you first.
+
 Faster chrome, quieter agent chat. Typing in the address field and find-in-page no longer redraw every tab on every keystroke, and while an agent streams, only the growing reply updates — the rest of the transcript stays still.
 
 Agent chats stay where you put them. While an agent is writing, scrolling back to read earlier messages no longer pulls the conversation down to the newest line on every word; it follows again when you return to the bottom.
